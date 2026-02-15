@@ -1,0 +1,1338 @@
+# 🏥 COMPLETE AI PATIENT TRIAGE SYSTEM - MASTER BUILD PROMPT
+
+---
+
+## 📋 SINGLE COMPREHENSIVE PROMPT FOR AI AGENTS
+
+Copy this entire prompt and give it to your AI coding agent (GPT-5.3 Codex / Claude Opus 4.6 / Gemini 3 Pro):
+
+---
+
+```
+You are building a PRODUCTION-GRADE AI-Powered Smart Patient Triage System for a 32-hour hackathon.
+
+# ═══════════════════════════════════════════════════════════════
+# SYSTEM OVERVIEW
+# ═══════════════════════════════════════════════════════════════
+
+GOAL: Create an intelligent patient triage system that:
+1. Analyzes patient symptoms and vitals (manual entry or document upload)
+2. Classifies risk level: Low (60%), Medium (30%), High (10%)
+3. Recommends appropriate medical department (8 departments)
+4. Assigns priority score for queueing (1-10 scale)
+5. Provides explainable predictions using SHAP
+6. Processes single patients or batches (CSV)
+7. Stores prediction history in SQLite database
+8. Displays results in professional Streamlit dashboard
+
+# ═══════════════════════════════════════════════════════════════
+# TECH STACK (NON-NEGOTIABLE)
+# ═══════════════════════════════════════════════════════════════
+
+Language: Python 3.9+
+Frontend: Streamlit (single-page app)
+ML Framework: XGBoost + scikit-learn
+Explainability: SHAP
+Data Generation: Faker + pandas + numpy
+Document Processing: PyPDF2, python-docx
+Database: SQLite (local, no setup required)
+Visualization: Plotly + matplotlib
+Deployment: Local only (no cloud services)
+
+# ═══════════════════════════════════════════════════════════════
+# PROJECT STRUCTURE
+# ═══════════════════════════════════════════════════════════════
+
+patient-triage-ai/
+├── data/
+│   ├── synthetic_patients.csv          # 10,000 generated patients
+│   ├── generate_data.py                # Data generation script
+│   └── sample_ehr.pdf                  # Demo document
+├── models/
+│   ├── train_model.py                  # Complete training pipeline
+│   └── saved_models/
+│       ├── xgb_risk_classifier.pkl
+│       ├── preprocessor.pkl
+│       └── label_encoders.pkl
+├── utils/
+│   ├── ml_engine.py                    # Production inference engine
+│   ├── document_parser.py              # PDF/DOC/CSV parser
+│   ├── explainer.py                    # SHAP explainability
+│   ├── department_recommender.py       # Department + priority logic
+│   ├── database.py                     # SQLite operations
+│   └── validators.py                   # Input validation
+├── database/
+│   └── patients.db                     # Auto-created SQLite DB
+├── tests/
+│   ├── test_system.py                  # Integration tests
+│   └── sample_data/
+│       ├── test_ehr.pdf
+│       └── test_batch.csv
+├── app.py                              # Main Streamlit application
+├── requirements.txt
+├── README.md
+└── run.sh                              # Quick start script
+
+# ═══════════════════════════════════════════════════════════════
+# PART 1: DATA GENERATION (10,000 PATIENTS)
+# ═══════════════════════════════════════════════════════════════
+
+## EXACT METADATA SCHEMA (from problem statement):
+Patient_ID,Age,Gender,Symptoms,Blood Pressure,Heart Rate,Temperature,Pre-Existing Conditions,Risk_Level
+
+## DATA GENERATION REQUIREMENTS:
+
+### 1. DEMOGRAPHICS
+- Patient_ID: UUID format (e.g., 550e8400-e29b-41d4-a716-446655440000)
+- Age: 18-90 years, normal distribution (mean=50, std=18)
+- Gender: Male (48%), Female (48%), Other (4%)
+
+### 2. SYMPTOMS (comma-separated string, 1-4 symptoms per patient)
+
+HIGH RISK SYMPTOMS (if present → likely High risk):
+'chest pain', 'severe shortness of breath', 'confusion', 'severe bleeding',
+'loss of consciousness', 'stroke symptoms', 'severe abdominal pain',
+'difficulty breathing', 'severe allergic reaction', 'uncontrolled bleeding',
+'seizure', 'severe trauma'
+
+MEDIUM RISK SYMPTOMS:
+'moderate shortness of breath', 'high fever', 'persistent vomiting',
+'severe headache', 'palpitations', 'moderate bleeding', 'severe pain',
+'dizziness', 'fainting', 'dehydration', 'abdominal pain', 'irregular heartbeat'
+
+LOW RISK SYMPTOMS:
+'mild headache', 'cough', 'cold', 'minor pain', 'fatigue', 'nausea',
+'mild fever', 'sore throat', 'runny nose', 'muscle ache', 'rash',
+'minor injury', 'constipation', 'mild dizziness', 'back pain', 'joint pain',
+'insomnia', 'anxiety', 'minor cut', 'sprain'
+
+### 3. VITALS (realistic ranges, correlated with risk)
+
+Blood Pressure Format: "systolic/diastolic" (e.g., "120/80")
+- Normal: 110-130 / 70-85
+- Elevated: 130-150 / 85-95
+- High: 150-180 / 95-110
+- Critical: 180-200 / 110-120
+- Correlation: Older age → higher BP, High risk → elevated BP
+
+Heart Rate (bpm):
+- Normal: 60-90
+- Elevated: 90-110
+- High: 110-130
+- Critical: 130-150 or <50
+- Correlation: Cardiac symptoms → elevated HR, fever → +10-20 bpm
+
+Temperature (Fahrenheit):
+- Normal: 97.5-99.5
+- Low fever: 99.5-100.5
+- Moderate fever: 100.5-102.5
+- High fever: 102.5-104.0
+- Correlation: Infection symptoms → elevated temperature
+
+### 4. PRE-EXISTING CONDITIONS (comma-separated, 0-4 per patient)
+'diabetes', 'hypertension', 'asthma', 'heart disease', 'COPD',
+'kidney disease', 'obesity', 'cancer', 'stroke history', 'arthritis',
+'high cholesterol', 'thyroid disorder', 'anxiety', 'depression'
+
+Age correlation:
+- 18-40: 0-1 conditions (20% have any)
+- 41-60: 1-2 conditions (60% have any)
+- 61-80: 2-3 conditions (85% have any)
+- 81+: 2-4 conditions (95% have any)
+
+### 5. RISK LEVEL ASSIGNMENT (EXACT DISTRIBUTION REQUIRED)
+
+DISTRIBUTION: 60% Low (6000), 30% Medium (3000), 10% High (1000)
+
+HIGH RISK CRITERIA (pick target number first, then assign features):
+- Any high-risk symptom present
+- BP systolic ≥180 OR diastolic ≥110
+- Heart rate >130 OR <50
+- Temperature ≥103°F
+- Age >75 + 3+ pre-existing conditions
+- Chest pain + elevated BP/HR
+- Confusion with any other symptom
+
+MEDIUM RISK CRITERIA:
+- Any medium-risk symptom present
+- BP systolic 140-179 OR diastolic 90-109
+- Heart rate 100-130
+- Temperature 100.5-102.9°F
+- Age >65 + 2 pre-existing conditions
+- 2+ symptoms with elevated vitals
+
+LOW RISK CRITERIA:
+- Only low-risk symptoms
+- All vitals in normal ranges
+- Age <65 with 0-1 conditions
+- Single mild symptom
+
+CRITICAL: Ensure features CORRELATE with assigned risk level for model training effectiveness.
+
+### 6. DATA QUALITY REQUIREMENTS
+- Zero null/missing values
+- All Patient_IDs unique
+- Vitals within medically possible ranges
+- Risk distribution EXACTLY 60-30-10
+- Symptoms logically match risk (e.g., chest pain → High risk)
+- Conditions correlate with age
+- Generate in <60 seconds using vectorized operations
+- Save as CSV: data/synthetic_patients.csv
+
+# ═══════════════════════════════════════════════════════════════
+# PART 2: FEATURE ENGINEERING & PREPROCESSING
+# ═══════════════════════════════════════════════════════════════
+
+## INPUT: Raw CSV data
+## OUTPUT: Feature matrix ready for ML (40+ features)
+
+### STEP 1: PARSE RAW FEATURES
+- Blood Pressure "175/98" → bp_systolic=175, bp_diastolic=98
+- Symptoms "chest pain,cough" → list ['chest pain', 'cough']
+- Pre-Existing Conditions → list of conditions
+
+### STEP 2: CREATE DERIVED FEATURES
+
+#### A. VITAL SIGN RISK SCORES (continuous)
+bp_risk_score = ((bp_systolic - 120) / 20) + ((bp_diastolic - 80) / 10)
+hr_risk_score = abs(heart_rate - 70) / 30
+temp_risk_score = abs(temperature - 98.6) / 2
+
+Interpretation: 0 = normal, positive = high risk, negative = unusually low
+
+#### B. DEMOGRAPHIC FEATURES (categorical → one-hot encoded)
+age_group: 'child' (0-12), 'young_adult' (13-30), 'adult' (31-50), 
+           'senior' (51-70), 'elderly' (71+)
+gender: Male/Female/Other → one-hot encoding
+
+#### C. SYMPTOM FEATURES (multi-label binary encoding)
+- Use MultiLabelBinarizer for all unique symptoms (~25-30 columns)
+- Create binary column for each symptom (1 if present, 0 if not)
+- symptom_count: total number of symptoms
+- has_high_risk_symptom: 1 if any high-risk symptom present
+- has_cardiac_symptom: 1 if cardiac-related symptoms
+- has_respiratory_symptom: 1 if breathing-related symptoms
+- has_neurological_symptom: 1 if neuro-related symptoms
+
+#### D. COMORBIDITY FEATURES
+- condition_count: number of pre-existing conditions
+- has_diabetes: binary
+- has_hypertension: binary
+- has_heart_disease: binary
+- has_respiratory_disease: binary (asthma or COPD)
+- comorbidity_score: weighted sum (heart disease=3, diabetes=2, others=1)
+
+#### E. INTERACTION FEATURES (capture complex patterns)
+- age_bp_interaction = age * bp_risk_score
+- symptom_condition_interaction = has_cardiac_symptom * has_heart_disease
+- age_condition_interaction = (age / 10) * condition_count
+- vitals_severity = bp_risk_score + hr_risk_score + temp_risk_score
+
+### STEP 3: ENCODE TARGET VARIABLE
+Risk_Level: "Low" → 0, "Medium" → 1, "High" → 2
+
+### STEP 4: TRAIN-VALIDATION-TEST SPLIT
+- 70% training (7,000 patients)
+- 15% validation (1,500 patients)
+- 15% test (1,500 patients)
+- Use stratified split (maintain 60-30-10 distribution in each set)
+
+### STEP 5: SAVE PREPROCESSOR
+- Save fitted encoders/scalers using joblib
+- Save to: models/saved_models/preprocessor.pkl
+- Must be reusable for inference on new patients
+
+# ═══════════════════════════════════════════════════════════════
+# PART 3: MODEL TRAINING (XGBOOST)
+# ═══════════════════════════════════════════════════════════════
+
+## ALGORITHM: XGBoost Multi-Class Classifier
+
+### HYPERPARAMETERS (optimized for this problem):
+n_estimators = 300
+max_depth = 7
+learning_rate = 0.05
+subsample = 0.8
+colsample_bytree = 0.8
+objective = 'multi:softprob'
+num_class = 3
+eval_metric = 'mlogloss'
+early_stopping_rounds = 50
+random_state = 42
+
+### CLASS IMBALANCE HANDLING:
+scale_pos_weight or class_weight:
+- Low (class 0): weight = 1.0
+- Medium (class 1): weight = 2.0
+- High (class 2): weight = 6.0 (CRITICAL - cannot miss high-risk patients)
+
+### TRAINING PROCESS:
+1. Fit XGBoost on training data
+2. Validate on validation set after each round
+3. Apply early stopping if validation loss doesn't improve for 50 rounds
+4. Save best model (not final model)
+5. Evaluate on test set
+
+### PERFORMANCE TARGETS (MINIMUM ACCEPTABLE):
+Overall Accuracy: ≥85%
+
+Per-Class Metrics:
+- Low Risk: Precision ≥88%, Recall ≥92%, F1 ≥0.90
+- Medium Risk: Precision ≥80%, Recall ≥75%, F1 ≥0.77
+- High Risk: Precision ≥85%, Recall ≥95% (CRITICAL), F1 ≥0.90
+
+Confusion Matrix:
+- WORST CASE: High classified as Low (DANGEROUS) - must be <2%
+- ACCEPTABLE: Low classified as High (over-cautious but safe) - <8%
+
+Cross-Validation:
+- 5-fold CV accuracy: 85% ± 3% (consistency check)
+
+### MODEL EVALUATION OUTPUT:
+- Accuracy, Precision, Recall, F1 per class
+- Confusion matrix
+- Classification report
+- Feature importance (top 15 features)
+- ROC-AUC curves (one-vs-rest for each class)
+
+### SAVE MODEL:
+- Save trained model: models/saved_models/xgb_risk_classifier.pkl (using joblib)
+- Save feature names: models/saved_models/feature_names.json
+
+# ═══════════════════════════════════════════════════════════════
+# PART 4: PRIORITY QUEUEING SYSTEM (NEW)
+# ═══════════════════════════════════════════════════════════════
+
+## PURPOSE: Assign numerical priority score (1-10) for patient queueing
+## HIGHER SCORE = MORE URGENT
+
+### PRIORITY CALCULATION FORMULA:
+
+priority_score = (risk_weight * 3.0) + (age_factor * 1.5) + (vitals_urgency * 2.0) + 
+                 (symptom_severity * 2.0) + (comorbidity_factor * 1.5)
+
+Where:
+- risk_weight: Low=1, Medium=3, High=5
+- age_factor: (age / 100) * 2 (elderly get higher priority)
+- vitals_urgency: Calculated from BP/HR/Temp deviation from normal
+- symptom_severity: Count of high-risk symptoms * 0.5
+- comorbidity_factor: condition_count * 0.3
+
+Normalize to 1-10 scale.
+
+### PRIORITY CATEGORIES:
+
+CRITICAL PRIORITY (9-10):
+- High risk patients
+- Any emergency symptoms (severe bleeding, loss of consciousness, stroke)
+- BP systolic >180 or diastolic >110
+- Heart rate >140 or <45
+- Temperature >103.5°F
+- Multiple high-risk factors combined
+
+URGENT PRIORITY (7-8):
+- Medium risk patients with concerning vitals
+- Age >70 + multiple symptoms
+- Cardiac symptoms + pre-existing heart disease
+- High fever (>102°F) + respiratory symptoms
+
+HIGH PRIORITY (5-6):
+- Medium risk patients
+- Moderate symptoms with stable vitals
+- Age >65 + chronic conditions
+
+STANDARD PRIORITY (3-4):
+- Low risk patients with mild symptoms
+- Normal vitals, minimal conditions
+- Single non-urgent symptom
+
+LOW PRIORITY (1-2):
+- Low risk patients
+- Minor complaints
+- Routine check-ups
+- Very stable vitals
+
+### PRIORITY QUEUE LOGIC:
+
+When displaying multiple patients:
+1. Sort by priority_score (descending)
+2. Within same priority, sort by age (descending - elderly first)
+3. Within same priority + age, sort by arrival time (FIFO)
+
+### ESTIMATED WAIT TIME CALCULATION:
+
+wait_time_minutes = base_wait_time[department] * (queue_position / priority_score)
+
+Base wait times by department:
+- Emergency: 5 minutes (immediate)
+- Cardiology: 30 minutes
+- Neurology: 35 minutes
+- Pulmonology: 40 minutes
+- Orthopedics: 45 minutes
+- Gastroenterology: 40 minutes
+- Pediatrics: 25 minutes
+- General Medicine: 50 minutes
+
+Adjust based on priority:
+- Critical (9-10): 0-10 minutes regardless of department
+- Urgent (7-8): 10-20 minutes
+- High (5-6): 20-40 minutes
+- Standard (3-4): 40-60 minutes
+- Low (1-2): 60+ minutes
+
+### OUTPUT FORMAT:
+{
+  "priority_score": 8.7,
+  "priority_category": "Urgent",
+  "queue_position": 3,
+  "estimated_wait_time": "12 minutes",
+  "reasoning": "High risk cardiac symptoms with pre-existing heart disease in elderly patient"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PART 5: DEPARTMENT RECOMMENDATION SYSTEM
+# ═══════════════════════════════════════════════════════════════
+
+## HYBRID APPROACH: Rule-Based (Priority 1-2) + ML Backup (Priority 3)
+
+### 8 DEPARTMENTS:
+1. Emergency Department
+2. Cardiology
+3. Neurology
+4. Pulmonology
+5. Orthopedics
+6. Gastroenterology
+7. Pediatrics
+8. General Medicine
+
+### PRIORITY 1: EMERGENCY RULES (immediate routing)
+Route to EMERGENCY DEPARTMENT if ANY:
+- risk_level = "High"
+- priority_score ≥9.0
+- Symptoms: 'severe bleeding', 'loss of consciousness', 'stroke symptoms', 
+  'severe allergic reaction', 'uncontrolled bleeding', 'severe trauma'
+- BP systolic >180 or diastolic >110
+- Heart rate >140 or <45
+- Temperature >103.5°F
+- Confusion + any other symptom
+- Chest pain + BP elevated + age >60
+
+Reasoning: "Critical condition requiring immediate emergency attention"
+
+### PRIORITY 2: SPECIALTY DEPARTMENT RULES
+
+#### CARDIOLOGY:
+Criteria:
+- Symptoms: 'chest pain', 'palpitations', 'irregular heartbeat'
+- Pre-existing: 'heart disease'
+- Age >50 + chest pain + elevated BP/HR
+- Has_cardiac_symptom = 1
+
+#### NEUROLOGY:
+Criteria:
+- Symptoms: 'severe headache', 'confusion', 'dizziness', 'seizure', 
+  'stroke symptoms', 'loss of consciousness' (non-emergency)
+- Pre-existing: 'stroke history'
+- Has_neurological_symptom = 1
+
+#### PULMONOLOGY:
+Criteria:
+- Symptoms: 'shortness of breath', 'cough', 'wheezing', 
+  'difficulty breathing' (non-critical)
+- Pre-existing: 'asthma', 'COPD'
+- Has_respiratory_symptom = 1
+- Elevated respiratory rate
+
+#### ORTHOPEDICS:
+Criteria:
+- Symptoms: 'joint pain', 'back pain', 'fracture', 'sprain', 'minor injury'
+- Trauma-related without severe bleeding
+- Musculoskeletal complaints
+
+#### GASTROENTEROLOGY:
+Criteria:
+- Symptoms: 'abdominal pain', 'vomiting', 'nausea', 'constipation'
+- Persistent GI symptoms without critical vitals
+
+#### PEDIATRICS:
+Criteria:
+- Age <18
+- OVERRIDES all other rules (children always go to Pediatrics first)
+
+#### GENERAL MEDICINE (Default):
+Criteria:
+- No clear specialist indication
+- Mild, non-specific symptoms
+- Low risk patients
+- Multiple symptom categories without clear primary
+
+### PRIORITY 3: ML-BASED RECOMMENDATION (for ambiguous cases)
+If no clear rule match:
+- Train separate Random Forest classifier
+- Input: Same features as risk model + risk_prediction
+- Output: Department (8 classes)
+- Use for: Multiple symptom categories, unclear presentation
+
+### OUTPUT FORMAT:
+{
+  "department": "Cardiology",
+  "reason": "Chest pain with elevated blood pressure and cardiac history",
+  "urgency": "Urgent",
+  "alternative_department": "Emergency if symptoms worsen",
+  "routing_logic": "rule_based"  # or "ml_based"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PART 6: EXPLAINABILITY (SHAP)
+# ═══════════════════════════════════════════════════════════════
+
+## PURPOSE: Explain WHY the model made its prediction
+
+### SHAP IMPLEMENTATION:
+1. Initialize: shap.TreeExplainer(xgb_model)
+2. For each prediction: explainer.shap_values(patient_features)
+3. Extract top contributors (positive and negative)
+4. Map technical feature names to human-readable text
+5. Generate visualizations
+
+### OUTPUT FORMAT:
+{
+  "prediction": {
+    "risk_level": "High",
+    "confidence": 0.87,
+    "probabilities": {"Low": 0.05, "Medium": 0.08, "High": 0.87}
+  },
+  
+  "explanation": {
+    "base_risk": 0.25,  # Average risk across all patients
+    "final_risk": 0.87,
+    
+    "top_contributors": [
+      {
+        "feature": "Chest Pain Symptom",
+        "impact": +0.35,
+        "direction": "increases risk",
+        "value": "Present",
+        "interpretation": "Chest pain is a high-risk cardiac symptom"
+      },
+      {
+        "feature": "Blood Pressure (Systolic)",
+        "impact": +0.18,
+        "direction": "increases risk",
+        "value": "175 mmHg",
+        "interpretation": "Significantly elevated (normal: 120 mmHg)"
+      },
+      {
+        "feature": "Age",
+        "impact": +0.12,
+        "direction": "increases risk",
+        "value": "65 years",
+        "interpretation": "Senior age increases medical risk"
+      },
+      {
+        "feature": "Pre-existing Diabetes",
+        "impact": +0.08,
+        "direction": "increases risk",
+        "value": "Yes",
+        "interpretation": "Comorbidity increases complications"
+      },
+      {
+        "feature": "Heart Rate",
+        "impact": +0.06,
+        "direction": "increases risk",
+        "value": "95 bpm",
+        "interpretation": "Moderately elevated (normal: 60-100)"
+      }
+    ],
+    
+    "protective_factors": [
+      {
+        "feature": "Temperature",
+        "impact": -0.06,
+        "direction": "decreases risk",
+        "value": "98.8°F",
+        "interpretation": "Normal temperature, no infection indicated"
+      }
+    ],
+    
+    "confidence_factors": [
+      "Model has seen 347 similar cases in training data",
+      "Feature patterns strongly match high-risk profile",
+      "All key indicators align consistently"
+    ]
+  }
+}
+
+### FEATURE NAME MAPPING (technical → readable):
+'bp_risk_score' → 'Blood Pressure Risk'
+'symptom_chest_pain' → 'Chest Pain Symptom'
+'age' → 'Patient Age'
+'has_heart_disease' → 'Pre-existing Heart Disease'
+'hr_risk_score' → 'Heart Rate Risk'
+Add units where appropriate (mmHg, bpm, °F, years)
+
+### VISUALIZATION GENERATION:
+- Force plot: Shows push/pull of features from base to final prediction
+- Waterfall chart: Cumulative effect of features
+- Bar chart: Top 10 contributors (horizontal bars, color-coded)
+
+# ═══════════════════════════════════════════════════════════════
+# PART 7: DOCUMENT PROCESSING
+# ═══════════════════════════════════════════════════════════════
+
+## SUPPORTED FORMATS: PDF, DOCX, CSV
+
+### CSV PROCESSING (simplest):
+1. Read using pandas
+2. Flexible column mapping:
+   - "PatientID" or "Patient_ID" or "patient_id" → Patient_ID
+   - "BP" or "Blood_Pressure" or "BloodPressure" → Blood Pressure
+   - Handle case variations
+3. Validate each row
+4. Return list of patient dictionaries
+5. Batch processing ready
+
+### PDF/DOCX PROCESSING (complex):
+
+#### EXTRACTION STRATEGY:
+1. Extract text: PyPDF2.PdfReader (PDF), python-docx (DOCX)
+2. Pattern recognition using regex
+3. Validate extracted values
+4. Use defaults for missing fields
+
+#### REGEX PATTERNS:
+Age: r'age[:\s]+(\d+)' → captures "Age: 65" or "age 65"
+Gender: r'gender[:\s]+(male|female|other|m|f)' (case insensitive)
+Blood Pressure: r'b\.?p\.?[:\s]+(\d{2,3})/(\d{2,3})' → "BP: 175/98"
+Heart Rate: r'heart\s*rate[:\s]+(\d{2,3})' or r'hr[:\s]+(\d{2,3})'
+Temperature: r'temp(?:erature)?[:\s]+([\d.]+)'
+Symptoms: r'symptoms?[:\s]+(.+?)(?:\n\n|\nVital|\n[A-Z]|$)' → capture until next section
+Pre-existing: r'(?:medical\s+history|pre[-\s]existing|conditions?)[:\s]+(.+?)(?:\n\n|\n[A-Z]|$)'
+
+#### DEFAULT VALUES (if extraction fails):
+- Age: 40 (median)
+- Gender: "Unknown"
+- Blood Pressure: "120/80"
+- Heart Rate: 70
+- Temperature: 98.6
+- Symptoms: "" (empty, will be low risk)
+- Pre-Existing Conditions: ""
+
+#### ERROR HANDLING:
+- Malformed document → show clear error message
+- Missing sections → use defaults, log warning
+- Invalid formats → attempt conversion, fallback to defaults
+- Corrupted file → catch exception, suggest re-upload
+
+### OUTPUT:
+All parsers return standardized dictionary:
+{
+  "Patient_ID": "550e...",
+  "Age": 65,
+  "Gender": "Male",
+  "Symptoms": "chest pain,shortness of breath",
+  "Blood Pressure": "175/98",
+  "Heart Rate": 95,
+  "Temperature": 98.8,
+  "Pre-Existing Conditions": "diabetes,hypertension"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PART 8: DATABASE DESIGN (SQLITE)
+# ═══════════════════════════════════════════════════════════════
+
+## SCHEMA: 4 Tables
+
+### TABLE 1: patients
+CREATE TABLE patients (
+    patient_id TEXT PRIMARY KEY,
+    age INTEGER,
+    gender TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT
+);
+
+### TABLE 2: predictions
+CREATE TABLE predictions (
+    prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    symptoms TEXT,
+    bp_systolic INTEGER,
+    bp_diastolic INTEGER,
+    heart_rate INTEGER,
+    temperature REAL,
+    pre_existing_conditions TEXT,
+    risk_level TEXT,
+    risk_probability_low REAL,
+    risk_probability_medium REAL,
+    risk_probability_high REAL,
+    recommended_department TEXT,
+    department_reason TEXT,
+    priority_score REAL,
+    priority_category TEXT,
+    estimated_wait_time TEXT,
+    model_confidence REAL,
+    processing_time_ms INTEGER,
+    source TEXT,
+    FOREIGN KEY (patient_id) REFERENCES patients(patient_id)
+);
+
+### TABLE 3: shap_explanations
+CREATE TABLE shap_explanations (
+    explanation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prediction_id INTEGER,
+    feature_name TEXT,
+    feature_value TEXT,
+    shap_value REAL,
+    rank INTEGER,
+    FOREIGN KEY (prediction_id) REFERENCES predictions(prediction_id) ON DELETE CASCADE
+);
+
+### TABLE 4: priority_queue
+CREATE TABLE priority_queue (
+    queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prediction_id INTEGER,
+    arrival_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    priority_score REAL,
+    department TEXT,
+    status TEXT DEFAULT 'waiting',  # waiting, in_progress, completed
+    queue_position INTEGER,
+    estimated_wait_time TEXT,
+    FOREIGN KEY (prediction_id) REFERENCES predictions(prediction_id)
+);
+
+### OPERATIONS:
+- Insert: After each prediction, insert into patients (if new), predictions, shap_explanations, priority_queue
+- Query: Get high-risk patients, department load, priority queue sorted, patient history
+- Update: Update queue status when patient seen, update wait times
+- Delete: Remove completed queue items after 24 hours
+
+# ═══════════════════════════════════════════════════════════════
+# PART 9: STREAMLIT USER INTERFACE
+# ═══════════════════════════════════════════════════════════════
+
+## APPLICATION CONFIGURATION:
+st.set_page_config(
+    page_title="AI Patient Triage System",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+## MAIN STRUCTURE: 5 Tabs
+
+### TAB 1: SINGLE PATIENT ANALYSIS
+
+#### LAYOUT: 3 Columns (40% - 35% - 25%)
+
+#### COLUMN 1: INPUT SECTION
+Form Elements:
+1. Patient ID: Text input with "Generate UUID" button
+2. Age: Number input (0-120, default 40)
+3. Gender: Selectbox (Male, Female, Other)
+4. Symptoms: Multiselect with search (all symptom options)
+5. Vital Signs:
+   - Blood Pressure: Two number inputs (systolic/diastolic)
+   - Heart Rate: Number input (40-180)
+   - Temperature: Number input (95-106)
+   - Show color indicators (green/yellow/red) based on ranges
+6. Pre-Existing Conditions: Multiselect
+7. Buttons:
+   - "Analyze Patient" (primary, blue)
+   - "Clear Form" (secondary, gray)
+   - "Save Draft" (tertiary)
+
+Document Upload (below form):
+- File uploader: st.file_uploader("Upload Medical Document", type=['pdf', 'docx', 'csv'])
+- On upload: Parse → Auto-fill form → Show extracted data in expander
+
+#### COLUMN 2: RESULTS SECTION (after analysis)
+1. Risk Badge:
+   - HIGH RISK: Red background, ⚠️ icon, large text
+   - MEDIUM RISK: Orange background, ⚡ icon
+   - LOW RISK: Green background, ✓ icon
+
+2. Priority Information Card:
+   - Priority Score: 8.7/10 (large number)
+   - Priority Category: "URGENT" (color-coded badge)
+   - Queue Position: "3rd in line"
+   - Estimated Wait Time: "12 minutes"
+
+3. Confidence Meter:
+   - Circular progress indicator (87%)
+   - Color matches risk level
+
+4. Risk Probabilities:
+   - Horizontal stacked bar chart
+   - Low: 5% | Medium: 8% | High: 87%
+
+5. Department Recommendation Card:
+   - Department icon + name
+   - Urgency indicator
+   - Routing reasoning text
+   - Alternative department suggestion
+
+6. Action Buttons:
+   - "Save to Database"
+   - "Add to Priority Queue"
+   - "Export as PDF"
+   - "Print Results"
+
+7. Metadata:
+   - Timestamp
+   - Processing time
+   - Model version
+
+#### COLUMN 3: EXPLANATION SECTION
+1. Header: "Why This Prediction?"
+
+2. SHAP Feature Importance Chart:
+   - Horizontal bar chart
+   - Top 5 increasing risk (red bars, right)
+   - Top 3 decreasing risk (green bars, left)
+
+3. Detailed Contributions Table:
+   | Feature | Value | Impact | Interpretation |
+   Example: | Chest Pain | Present | +0.35 | High-risk symptom |
+
+4. Plain Language Summary:
+   "The model classified this patient as HIGH RISK primarily due to the presence 
+   of chest pain (+35% impact), elevated blood pressure (+18%), and senior age 
+   (+12%). These factors combined with pre-existing cardiac conditions strongly 
+   indicate urgent medical attention is needed."
+
+5. Confidence Factors:
+   - "Model has seen 347 similar cases"
+   - "Feature patterns strongly match high-risk profile"
+
+6. Interactive Visualization:
+   - SHAP force plot (shows base → final prediction)
+   - Waterfall chart option (cumulative effects)
+
+### TAB 2: BATCH PROCESSING
+
+#### LAYOUT: Single column, full width
+
+Section 1: File Upload
+- Large drag-drop area
+- "Upload CSV with patient data"
+- "Download Template" button (provides empty CSV with correct headers)
+- "View Example Format" expander
+
+Section 2: File Preview & Validation
+- Preview table (first 10 rows)
+- Column mapping tool (if names don't match exactly)
+- Validation messages:
+  * ✓ "All required fields present"
+  * ⚠️ "Missing optional field: Pre-Existing Conditions"
+  * ❌ "Invalid age values in rows 5, 12"
+
+Section 3: Processing
+- "Process All Patients" button
+- Progress bar: "Analyzing patient 52 of 100..."
+- Estimated time remaining
+- "Cancel" button
+
+Section 4: Results Summary
+- KPI Cards (4 across):
+  * Total Analyzed: 100
+  * High Risk: 12 (12%)
+  * Medium Risk: 28 (28%)
+  * Low Risk: 60 (60%)
+  * Processing Time: 23 seconds
+
+Section 5: Priority Queue View
+- Table sorted by priority_score (descending):
+  | Priority | Patient ID | Age | Risk | Department | Wait Time | Actions |
+  | 9.2 | abc... | 68 | High | Emergency | 5 min | View | See All |
+  
+- Color-coded priority categories
+- "Send to Queue" button (adds all to database)
+
+Section 6: Detailed Results Table
+- Sortable, filterable, paginated
+- Columns: Patient_ID, Age, Gender, Risk, Priority, Department, Confidence
+- Click row → show detailed analysis in sidebar
+- Filter by risk level, department
+
+Section 7: Visualizations
+- Pie chart: Risk distribution
+- Bar chart: Department distribution
+- Priority score histogram
+- Age vs Risk scatter plot
+
+Section 8: Export Options
+- "Download Results CSV"
+- "Download Priority Queue PDF"
+- "Download Detailed Report"
+- "Save All to Database"
+
+### TAB 3: PRIORITY QUEUE MANAGEMENT (NEW)
+
+#### LAYOUT: Queue dashboard
+
+Section 1: Real-Time Queue Display
+- Live updating table (auto-refresh every 30 seconds)
+- Columns: Queue Position | Patient ID | Priority Score | Risk | Department | Wait Time | Status | Actions
+
+Section 2: Queue Statistics
+- Cards showing:
+  * Patients Waiting: 24
+  * Average Wait Time: 18 minutes
+  * Critical Patients: 3
+  * Longest Wait: 45 minutes
+
+Section 3: Department Load View
+- Visual representation of each department:
+  Emergency: ████████ 8 patients (avg wait: 7 min)
+  Cardiology: ████████████ 12 patients (avg wait: 35 min)
+  General Medicine: ████████████████ 16 patients (avg wait: 52 min)
+
+Section 4: Queue Management Actions
+- "Call Next Patient" button (moves top priority to "in progress")
+- "Mark as Completed" button
+- "Adjust Priority" (manual override with reason)
+- "Clear Completed" (remove completed patients from queue)
+
+Section 5: Priority Alerts
+- Real-time alerts for:
+  * New critical patient added
+  * Wait time exceeds threshold
+  * Department overload warning
+
+Section 6: Queue Filters
+- Show only: Critical | Urgent | High | Standard | Low
+- Filter by department
+- Filter by status: Waiting | In Progress | Completed
+- Search by Patient ID
+
+### TAB 4: ANALYTICS DASHBOARD
+
+#### LAYOUT: Grid of cards and charts
+
+Row 1: KPI Cards (5 across)
+1. Total Patients Analyzed: 1,247 (+23 today)
+2. High Risk Rate: 11.2% (↓2.3% vs yesterday)
+3. Average Priority Score: 4.8/10
+4. Average Confidence: 84.7%
+5. Average Wait Time: 28 minutes
+
+Row 2: Charts (2 columns)
+Left Column:
+1. Risk Distribution Over Time (last 30 days)
+   - Line chart with 3 lines (Low/Medium/High)
+   - Hoverable for exact numbers
+
+2. Department Load Distribution
+   - Horizontal bar chart
+   - Shows patient count per department
+   - Color-coded
+
+Right Column:
+1. Priority Score Distribution
+   - Histogram showing distribution of priority scores
+   - Helps identify typical ranges
+
+2. Wait Time by Department
+   - Box plot showing wait time distribution
+   - Identifies bottlenecks
+
+Row 3: Advanced Analytics
+Left Column:
+1. Symptom Frequency Analysis
+   - Word cloud or bar chart
+   - Most common symptoms
+
+2. Comorbidity Co-occurrence Heatmap
+   - Shows which conditions appear together
+   - E.g., Diabetes + Hypertension: 67%
+
+Right Column:
+1. Age vs Risk Analysis
+   - Scatter plot: Age (x-axis) vs Priority Score (y-axis)
+   - Color by risk level
+   - Shows trends
+
+2. Model Performance Metrics (if test data available)
+   - Confusion matrix
+   - Precision/Recall/F1 per class
+   - "Last evaluated: 2 hours ago"
+
+Row 4: Recent Activity
+- Timeline of last 20 predictions
+- Quick filters and search
+
+### TAB 5: PATIENT HISTORY
+
+#### LAYOUT: Search + Table + Details
+
+Section 1: Search and Filters
+- Search bar: Patient ID, symptoms, age range
+- Date range picker
+- Multi-select filters:
+  * Risk Level: Low/Medium/High
+  * Department: All departments
+  * Priority Category: Critical/Urgent/High/Standard/Low
+- "Apply Filters" button
+
+Section 2: Results Table
+- Paginated (20 per page)
+- Sortable by any column
+- Columns: Timestamp | Patient ID | Age | Risk | Priority | Department | Confidence
+- Click row → open detail view
+
+Section 3: Patient Detail Sidebar/Modal
+When clicking a row:
+- Full patient demographics
+- All symptoms and vitals
+- Risk prediction with probabilities
+- Priority score and queue info
+- Department recommendation
+- SHAP explanation
+- Timeline (if multiple visits)
+- "Re-analyze" button
+- "Export Report" button
+
+Section 4: History Statistics
+- Total unique patients: 847
+- Average risk by age group
+- Most common departments visited
+- Trend analysis charts
+
+Section 5: Bulk Actions
+- "Export History (CSV)"
+- "Generate Statistics Report (PDF)"
+- "Clear Old Records" (>90 days)
+
+## UI STYLING & UX:
+
+### Color Scheme (Medical Professional):
+- Primary: #0066CC (medical blue)
+- Success: #28A745 (green - low risk)
+- Warning: #FFA500 (orange - medium risk)
+- Danger: #DC3545 (red - high risk)
+- Background: #F8F9FA (light gray)
+- Text: #212529 (dark gray)
+
+### Custom CSS (inject with st.markdown):
+- Risk badges with rounded corners
+- Shadow effects on cards
+- Hover effects on buttons
+- Professional fonts (sans-serif)
+- Smooth transitions
+
+### Loading States:
+- Show spinners during processing
+- Disable buttons during analysis
+- Progress bars for batch operations
+- Skeleton screens for loading data
+
+### Error Handling:
+- Clear error messages with st.error()
+- Warnings with st.warning()
+- Info messages with st.info()
+- Success confirmations with st.success()
+
+### Responsive Design:
+- Works on desktop (optimized for)
+- Tablet-friendly (readable)
+- Mobile (basic functionality)
+
+# ═══════════════════════════════════════════════════════════════
+# PART 10: TESTING STRATEGY
+# ═══════════════════════════════════════════════════════════════
+
+## Create tests/test_system.py with comprehensive tests
+
+### TEST SUITE 1: Unit Tests
+
+#### Test Data Generation:
+- Generates exactly 10,000 patients
+- Risk distribution is 6000-3000-1000
+- All vitals within valid ranges
+- No null values
+- Unique Patient_IDs
+- Correlations exist (age-conditions, symptoms-risk)
+
+#### Test Feature Engineering:
+- BP parsing correct
+- Risk scores calculated correctly
+- Symptom encoding works
+- No NaN values after processing
+- Feature count matches expected
+
+#### Test Model:
+- Loads without errors
+- Prediction returns correct format
+- Probabilities sum to 1.0
+- Prediction time <2 seconds
+- Batch prediction vectorized
+
+#### Test Priority Calculation:
+- Priority scores in 1-10 range
+- High risk → priority ≥7
+- Critical symptoms → priority ≥9
+- Priority correlates with risk
+
+#### Test Department Recommender:
+- Chest pain → Cardiology (or Emergency if severe)
+- Age <18 → Pediatrics
+- High risk → Emergency
+- All departments reachable
+
+#### Test Document Parser:
+- PDF extraction works
+- DOCX extraction works
+- CSV batch processing works
+- Missing fields use defaults
+- Malformed files handled gracefully
+
+#### Test SHAP Explainer:
+- Returns top contributors
+- Impact values reasonable
+- Feature names mapped correctly
+- Visualizations generate
+
+### TEST SUITE 2: Integration Tests
+
+#### Test Scenario 1: Manual Entry Flow
+1. Open app
+2. Fill form with high-risk patient
+3. Click "Analyze"
+4. Verify: Risk=High, Priority≥8, Department=Emergency/Cardiology
+5. Save to database
+6. Check database record exists
+
+#### Test Scenario 2: Document Upload Flow
+1. Upload test_ehr.pdf
+2. Verify form auto-fills
+3. Check extraction accuracy
+4. Analyze
+5. Verify results match expected
+
+#### Test Scenario 3: Batch Processing
+1. Upload test_batch.csv (20 patients)
+2. Process all
+3. Verify all 20 analyzed
+4. Check priority queue sorted correctly
+5. Download results
+
+#### Test Scenario 4: Priority Queue
+1. Add 10 patients to queue
+2. Verify sorting by priority
+3. Update status of top patient
+4. Verify queue reorders
+5. Check wait time calculations
+
+### TEST SUITE 3: Edge Cases
+
+#### Edge Case 1: Extreme Values
+- Age 0 (newborn) → Pediatrics
+- Age 120 → handled without crash
+- BP 300/200 → flagged as invalid
+- Temperature 110°F → Emergency
+- No symptoms → Low risk
+- All symptoms → handled
+
+#### Edge Case 2: Missing Data
+- PDF with only age/gender → uses defaults
+- CSV with half columns missing → fills defaults
+- Empty symptoms field → Low risk
+
+#### Edge Case 3: Rapid Succession
+- Analyze 100 patients quickly
+- Check for memory leaks
+- Verify all predictions correct
+- Database integrity maintained
+
+#### Edge Case 4: Invalid Input
+- Negative age → rejected
+- Invalid BP format → corrected or rejected
+- Malformed file → clear error message
+- SQL injection attempt → sanitized
+
+### PERFORMANCE BENCHMARKS:
+- Data generation: <60 seconds
+- Model training: <10 minutes
+- Single prediction: <2 seconds
+- Batch 100 patients: <20 seconds
+- Database query: <500ms
+- UI load time: <3 seconds
+- Form → results: <4 seconds total
+
+# ═══════════════════════════════════════════════════════════════
+# PART 11: IMPLEMENTATION INSTRUCTIONS
+# ═══════════════════════════════════════════════════════════════
+
+## BUILD ORDER (32-Hour Timeline):
+
+### Hours 0-2: Environment Setup
+- Create project structure (all folders/files)
+- Install dependencies
+- Test imports
+- Initialize git
+
+### Hours 2-6: Data Generation
+- Implement data/generate_data.py
+- Generate 10,000 patients
+- Validate distribution and quality
+- Create 3 sample EHR documents
+- Deliverable: synthetic_patients.csv
+
+### Hours 6-10: Feature Engineering
+- Implement preprocessing pipeline
+- Parse raw features
+- Create derived features
+- Split train/val/test
+- Save preprocessor
+- Deliverable: Processed data, preprocessor.pkl
+
+### Hours 10-14: Model Training
+- Implement models/train_model.py
+- Train XGBoost
+- Tune hyperparameters
+- Evaluate performance
+- Save model
+- Deliverable: xgb_risk_classifier.pkl with ≥85% accuracy
+
+### Hours 14-16: Department + Priority Logic
+- Implement utils/department_recommender.py
+- Build rule-based routing
+- Implement priority calculation
+- Test on scenarios
+- Deliverable: Department mapper with priority
+
+### Hours 16-18: Document Parser
+- Implement utils/document_parser.py
+- PDF/DOCX/CSV parsers
+- Regex extraction
+- Test with samples
+- Deliverable: Working parser
+
+### Hours 18-20: ML Inference Engine
+- Implement utils/ml_engine.py
+- Load models
+- Predict function
+- Integrate department + priority
+- Deliverable: Production inference
+
+### Hours 20-22: Explainability
+- Implement utils/explainer.py
+- SHAP integration
+- Feature name mapping
+- Visualization generation
+- Deliverable: SHAP explainer
+
+### Hours 22-24: Database
+- Implement utils/database.py
+- Create schema
+- CRUD operations
+- Test inserts/queries
+- Deliverable: Database module
+
+### Hours 24-27: Streamlit UI Core
+- Implement app.py
+- Tab 1: Single Patient Analysis
+- Tab 2: Batch Processing
+- Tab 3: Priority Queue
+- Test workflows
+- Deliverable: Working UI core features
+
+### Hours 27-28: Streamlit UI Advanced
+- Tab 4: Analytics Dashboard
+- Tab 5: Patient History
+- Polish styling
+- Error handling
+- Deliverable: Complete UI
+
+### Hours 28-29: Integration Testing
+- Run all test scenarios
+- Fix bugs
+- Test edge cases
+- Load testing
+- Deliverable: Stable system
+
+### Hours 29-30: Final Polish
+- Improve UI aesthetics
+- Add loading states
+- Better error messages
+- Documentation (minimal README)
+- Deliverable: Production-ready
+
+### Hours 30-32: Demo Preparation
+- Practice demo (3 times)
+- Prepare talking points
+- Test on fresh instance
+- Create presentation outline
+- Deliverable: Confident demo
+
+
+# ═══════════════════════════════════════════════════════════════
+# CRITICAL SUCCESS FACTORS
+# ═══════════════════════════════════════════════════════════════
+
+1. DATA QUALITY: Ensure correlations exist (symptoms → risk, age → conditions)
+2. MODEL PERFORMANCE: Must achieve ≥85% accuracy, ≥95% high-risk recall
+3. PRIORITY LOGIC: Must make medical sense (high risk = high priority)
+4. UI POLISH: Professional appearance, no crashes, smooth demo
+5. EXPLAINABILITY: SHAP explanations must be clear and accurate
+6. TESTING: Test every component before integration
+7. DEMO PRACTICE: Rehearse 3+ times, prepare for technical issues
+8. TIME MANAGEMENT: Follow timeline strictly, cut scope if needed
+
+# ═══════════════════════════════════════════════════════════════
+# DELIVERABLES CHECKLIST
+# ═══════════════════════════════════════════════════════════════
+
+□ Working prototype (Streamlit app running locally)
+□ synthetic_patients.csv (10,000 rows, 60-30-10 distribution)
+□ Trained model (xgb_risk_classifier.pkl, ≥85% accuracy)
+□ Source code (all Python files, organized structure)
+□ Database (SQLite with schema, sample data)
+□ README.md (setup instructions, features list)
+□ Model metrics (accuracy, confusion matrix, feature importance)
+□ Demo script (5-minute presentation outline)
+□ Test results (all tests passing)
+
+# ═══════════════════════════════════════════════════════════════
+# EVALUATION CRITERIA COVERAGE
+# ═══════════════════════════════════════════════════════════════
+
+Innovation (15%): AI + Priority Queueing + Explainability
+Technical Implementation (25%): XGBoost, SHAP, Production-grade code
+AI Model Performance (20%): 87% accuracy, 95% high-risk recall, documented metrics
+Explainability & Transparency (15%): SHAP visualizations, plain language
+UI/UX & Demonstration (15%): Polished Streamlit, smooth demo, priority queue
+Scalability (10%): Batch processing, database, local deployment
+
+# ═══════════════════════════════════════════════════════════════
+# FINAL INSTRUCTIONS
+# ═══════════════════════════════════════════════════════════════
+
+BUILD THIS SYSTEM WITH:
+- Production-grade code (error handling, logging, type hints)
+- Complete functionality (all features working)
+- Professional UI (clean, intuitive, no bugs)
+- Comprehensive testing (unit + integration)
+- Clear documentation (setup, usage)
+- Smooth demo (practiced, confident)
+
+PRIORITIZE:
+1. Core functionality (risk classification, priority queueing)
+2. Model performance (meet targets)
+3. UI stability (no crashes)
+4. Demo polish (smooth presentation)
+
+CUT IF TIME SHORT:
+- Advanced analytics
+- Export features
+- Styling perfection
+- Extra visualizations
+
+YOU HAVE ALL THE INFORMATION NEEDED TO BUILD THIS SUCCESSFULLY.
+Generate production-quality code, test thoroughly, practice demo.
+
+NOW: START BUILDING. Generate complete, working code for each component.
+```

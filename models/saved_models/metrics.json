@@ -1,0 +1,139 @@
+{
+  "accuracy": 1.0,
+  "per_class": {
+    "Low": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 900
+    },
+    "Medium": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 450
+    },
+    "High": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 150
+    }
+  },
+  "confusion_matrix": [
+    [
+      900,
+      0,
+      0
+    ],
+    [
+      0,
+      450,
+      0
+    ],
+    [
+      0,
+      0,
+      150
+    ]
+  ],
+  "classification_report": {
+    "Low": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 900.0
+    },
+    "Medium": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 450.0
+    },
+    "High": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 150.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 1500.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 1500.0
+    }
+  },
+  "roc_auc_ovr": 1.0,
+  "cv_accuracy_mean": 0.9997,
+  "cv_accuracy_std": 0.00024494897427829084,
+  "metrics_version": "1.0",
+  "top_feature_importance": [
+    {
+      "feature": "has_high_risk_symptom",
+      "importance": 0.3215678334236145
+    },
+    {
+      "feature": "vitals_severity",
+      "importance": 0.1984439492225647
+    },
+    {
+      "feature": "bp_risk_score",
+      "importance": 0.14474047720432281
+    },
+    {
+      "feature": "Heart Rate",
+      "importance": 0.0535021536052227
+    },
+    {
+      "feature": "age_bp_interaction",
+      "importance": 0.032744839787483215
+    },
+    {
+      "feature": "symptom_severe_shortness_of_breath",
+      "importance": 0.02438393235206604
+    },
+    {
+      "feature": "bp_diastolic",
+      "importance": 0.019219856709241867
+    },
+    {
+      "feature": "symptom_confusion",
+      "importance": 0.015431033447384834
+    },
+    {
+      "feature": "symptom_severe_bleeding",
+      "importance": 0.014118163846433163
+    },
+    {
+      "feature": "symptom_difficulty_breathing",
+      "importance": 0.012981624342501163
+    },
+    {
+      "feature": "symptom_uncontrolled_bleeding",
+      "importance": 0.012950761243700981
+    },
+    {
+      "feature": "hr_risk_score",
+      "importance": 0.012020383030176163
+    },
+    {
+      "feature": "symptom_seizure",
+      "importance": 0.009716666303575039
+    },
+    {
+      "feature": "symptom_runny_nose",
+      "importance": 0.007804162800312042
+    },
+    {
+      "feature": "symptom_mild_dizziness",
+      "importance": 0.0071015022695064545
+    }
+  ]
+}
