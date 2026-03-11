@@ -1,0 +1,4 @@
+Patient_ID,Age,Gender,Symptoms,Blood Pressure,Heart Rate,Temperature,Pre-Existing Conditions
+26e84914-d55f-414a-b8b4-112edb654dde,68,Female,"chest pain,palpitations",182/112,126,101.7,"heart disease,hypertension"
+78920a51-65c9-4411-a4e0-6e14bffe4813,24,Male,"cold,sore throat",118/76,74,98.6,none
+61668a8c-2a6c-432d-863f-0094094765c7,14,Other,"high fever,cough",122/79,102,102.4,asthma

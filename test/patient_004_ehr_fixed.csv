@@ -1,0 +1,46 @@
+Date,Record_Type,Description,Provider,Diagnosis_Code,Vitals_BP,Vitals_HR,Vitals_Temp,Lab_Name,Lab_Value,Lab_Unit,Lab_Normal_Range,Medication,Notes
+2023-01-10,visit,Oncology follow-up - breast cancer,Dr. Gupta - Oncology Center,C50.919,128/78,76,98.6,,,,,"Tamoxifen 20mg, Escitalopram 10mg, Montelukast 10mg",Stage II breast cancer; post-lumpectomy; on adjuvant hormonal therapy
+2023-01-10,lab,CA 15-3 tumor marker,Oncology Lab,,,,,,28,U/mL,<30,,Within normal range; stable
+2023-01-10,lab,CBC with differential,Oncology Lab,,,,,,,,,,"WBC 4.2, Hgb 11.8, Plt 195 - mild anemia"
+2023-01-10,lab,Hemoglobin,Oncology Lab,,,,,,11.8,g/dL,12.0-16.0,,Mildly low
+2023-02-15,visit,Asthma management,Dr. Rao - Pulmonology,,124/76,80,98.4,,,,,"Fluticasone/Salmeterol inhaler, Albuterol PRN",Moderate persistent asthma; well controlled on current regimen
+2023-03-05,diagnosis,Major depressive disorder recurrent,Dr. Pillai - Psychiatry,F33.1,,,,,,,,,Depression worsening; Escitalopram increased to 20mg
+2023-03-05,prescription,Escitalopram 20mg daily,Dr. Pillai,,,,,,,,,Escitalopram 20mg,Dose increased for worsening depression
+2023-04-20,er_visit,Asthma exacerbation with wheezing,City Hospital ER,,134/82,96,99.4,,,,,"Nebulized albuterol x3, Prednisone 40mg",SpO2 91%; triggered by spring allergens
+2023-04-21,hospitalization,Severe asthma exacerbation,City Hospital,J45.41,126/78,84,98.8,,,,,IV methylprednisolone,2-day admission; stepped down to oral prednisone taper
+2023-06-10,visit,Mammogram follow-up,Dr. Gupta - Oncology,,126/76,74,98.6,,,,,,Mammogram clear; no evidence of recurrence
+2023-06-10,procedure,Bilateral mammogram with tomosynthesis,Oncology Radiology,,,,,,,,,,BI-RADS 1 - Negative; no suspicious findings
+2023-07-15,visit,Annual physical with PCP,Dr. Reddy - General Practice,Z00.00,130/80,78,98.6,,,,,"Tamoxifen, Escitalopram, Montelukast, Fluticasone/Salmeterol, Calcium/VitD",Bone density scan due; cancer survivorship care
+2023-07-15,lab,Vitamin D,General Practice Lab,,,,,,22,ng/mL,30-100,,Low; supplement dose increased
+2023-07-15,lab,Fasting glucose,General Practice Lab,,,,,,96,mg/dL,70-100,,Normal
+2023-07-15,lab,TSH,General Practice Lab,,,,,,5.8,mIU/L,0.4-4.0,,Mildly elevated; subclinical hypothyroidism
+2023-07-15,diagnosis,Subclinical hypothyroidism,Dr. Reddy,E02,,,,,,,,,Monitoring; recheck in 3 months before starting treatment
+2023-09-01,procedure,DEXA bone density scan,Radiology Center,,,,,,,,,,T-score -1.8 lumbar spine; osteopenia
+2023-09-01,diagnosis,Osteopenia,Dr. Reddy,M85.80,,,,,,,,,Weight-bearing exercise; calcium and vitamin D supplementation
+2023-10-15,visit,Oncology 6-month check,Dr. Gupta,,128/78,76,98.4,,,,,,CA 15-3 stable; continuing Tamoxifen; no symptoms of recurrence
+2023-10-15,lab,CA 15-3,Oncology Lab,,,,,,26,U/mL,<30,,Stable
+2023-10-15,lab,Liver function panel,Oncology Lab,,,,,,,,,,"ALT 45 U/L (slightly elevated), AST 38 U/L - monitoring for Tamoxifen effect"
+2023-10-15,lab,ALT,Oncology Lab,,,,,,45,U/L,7-35,,Mildly elevated; possibly Tamoxifen-related
+2024-01-20,visit,Depression and anxiety management,Dr. Pillai - Psychiatry,,132/80,82,98.6,,,,,,Depression improved; sleep still disrupted; added Trazodone 50mg for insomnia
+2024-01-20,prescription,Trazodone 50mg at bedtime,Dr. Pillai,,,,,,,,,Trazodone 50mg,For insomnia associated with depression
+2024-03-10,er_visit,Fall at home - hip pain,Community Hospital ER,,138/84,88,98.6,,,,,,X-ray shows no fracture; severe contusion left hip; osteopenia increases fall risk
+2024-03-10,procedure,X-ray left hip and pelvis,Community Hospital Radiology,,,,,,,,,,No acute fracture; osteopenic bone changes noted
+2024-04-15,visit,Annual oncology check with imaging,Dr. Gupta - Oncology,,126/76,74,98.4,,,,,,CT chest/abdomen clear; no recurrence; 2 years post-surgery
+2024-04-15,lab,CA 15-3,Oncology Lab,,,,,,24,U/mL,<30,,Normal; stable
+2024-04-15,lab,CBC,Oncology Lab,,,,,,,,,,"WBC 3.8, Hgb 11.5, Plt 180 - persistent mild anemia"
+2024-04-15,lab,Hemoglobin,Oncology Lab,,,,,,11.5,g/dL,12.0-16.0,,Persistent mild anemia; iron studies ordered
+2024-04-15,lab,Ferritin,Oncology Lab,,,,,,18,ng/mL,20-200,,Low; iron deficiency contributing to anemia
+2024-05-01,prescription,Ferrous sulfate 325mg daily,Dr. Reddy,,,,,,,,,Ferrous sulfate 325mg,For iron deficiency anemia
+2024-06-20,er_visit,Acute asthma attack - smoke exposure,City Hospital ER,,140/86,104,99.6,,,,,"Epinephrine 0.3mg IM, Nebulizer x4",Neighbor's cooking fire triggered severe bronchospasm; SpO2 87%
+2024-06-21,hospitalization,Severe asthma exacerbation requiring ICU,City Hospital,J45.41,130/80,90,98.8,,,,,"IV magnesium, continuous nebulizer",3-day stay including 1 night ICU; pulmonology adjusting maintenance therapy
+2024-07-10,visit,Post-hospitalization pulmonology,Dr. Rao,,128/78,78,98.4,,,,,Added Tiotropium Respimat,Step-up therapy; now on triple inhaler regimen
+2024-09-15,visit,Thyroid recheck,Dr. Reddy,,130/80,76,98.6,,,,,,TSH now 6.2; starting Levothyroxine 25mcg
+2024-09-15,lab,TSH,General Practice Lab,,,,,,6.2,mIU/L,0.4-4.0,,Progressed; starting treatment
+2024-09-15,prescription,Levothyroxine 25mcg daily,Dr. Reddy,,,,,,,,,Levothyroxine 25mcg,For subclinical hypothyroidism progressing
+2024-10-20,visit,Depression follow-up,Dr. Pillai,,126/78,74,98.4,,,,,,Mood stable; sleep improved with Trazodone; continue current regimen
+2024-11-05,immunization,Influenza vaccine 2024-2025,General Practice Pharmacy,,,,,,,,,,Annual flu shot
+2024-11-05,immunization,COVID-19 updated booster,General Practice Pharmacy,,,,,,,,,,2024-2025 formulation
+2024-12-10,visit,Comprehensive year-end review,Dr. Reddy,,132/80,78,98.6,,,,,"Tamoxifen, Escitalopram, Trazodone, Montelukast, Fluticasone/Salmeterol, Tiotropium, Albuterol PRN, Calcium/VitD, Ferrous sulfate, Levothyroxine","10 medications; complex care coordination; oncology, pulmonology, psychiatry, endocrine"
+2024-12-10,lab,Hemoglobin,General Practice Lab,,,,,,12.2,g/dL,12.0-16.0,,Improved with iron supplementation
+2024-12-10,lab,TSH,General Practice Lab,,,,,,3.8,mIU/L,0.4-4.0,,Now in normal range on Levothyroxine
+2025-01-30,visit,Oncology 3-year survivorship check,Dr. Gupta,,128/78,76,98.6,,,,,,Doing well; mammogram scheduled; considering Tamoxifen discontinuation at 5 years

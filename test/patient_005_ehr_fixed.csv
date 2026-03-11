@@ -1,0 +1,40 @@
+Date,Record_Type,Description,Provider,Diagnosis_Code,Vitals_BP,Vitals_HR,Vitals_Temp,Lab_Name,Lab_Value,Lab_Unit,Lab_Normal_Range,Medication,Notes
+2023-04-12,visit,Annual physical exam,Dr. Thomas - Wellness Center,Z00.00,136/88,74,98.6,,,,,,BMI 33.2; counseled on weight management and exercise
+2023-04-12,lab,Fasting blood glucose,Wellness Center Lab,,,,,,108,mg/dL,70-100,,Mildly elevated; pre-diabetic range
+2023-04-12,lab,HbA1c,Wellness Center Lab,,,,,,5.7,%,4.0-5.6,,Borderline; lifestyle changes recommended
+2023-04-12,lab,Total cholesterol,Wellness Center Lab,,,,,,215,mg/dL,<200,,Borderline high
+2023-04-12,lab,LDL cholesterol,Wellness Center Lab,,,,,,132,mg/dL,<100,,Elevated
+2023-04-12,lab,HDL cholesterol,Wellness Center Lab,,,,,,38,mg/dL,>40,,Low; exercise recommended
+2023-04-12,lab,Triglycerides,Wellness Center Lab,,,,,,220,mg/dL,<150,,Elevated; dietary modification advised
+2023-04-12,lab,Liver function ALT,Wellness Center Lab,,,,,,52,U/L,7-35,,Elevated; possible fatty liver
+2023-04-12,diagnosis,Obesity class I,Dr. Thomas,E66.01,,,,,,,,,BMI 33.2; nutritionist referral placed
+2023-04-12,diagnosis,Essential hypertension stage 1,Dr. Thomas,I10,,,,,,,,,Lifestyle modification trial; recheck in 3 months
+2023-06-15,visit,Nutritionist consultation,Ms. Devi - Nutrition Dept,,134/86,72,98.4,,,,,,DASH diet plan created; goal to lose 15 lbs in 6 months
+2023-07-20,visit,BP recheck,Dr. Thomas,,138/90,76,98.6,,,,,,BP not improving with lifestyle alone; starting Losartan 25mg
+2023-07-20,prescription,Losartan 25mg daily,Dr. Thomas,,,,,,,,,Losartan 25mg,For hypertension not controlled by lifestyle
+2023-09-10,visit,Sleep study evaluation,Dr. Kumar - Sleep Medicine,,136/88,70,98.6,,,,,,Reports loud snoring; daytime sleepiness; Epworth score 14
+2023-09-25,procedure,Polysomnography - overnight sleep study,Sleep Center,,,,,,,,,,AHI 22 events/hour; moderate obstructive sleep apnea
+2023-09-25,diagnosis,Obstructive sleep apnea moderate,Dr. Kumar,G47.33,,,,,,,,,CPAP prescribed at 10 cm H2O
+2023-10-10,prescription,CPAP machine with heated humidifier,Dr. Kumar,,,,,,,,,CPAP 10 cmH2O,For moderate OSA; compliance monitoring initiated
+2023-12-06,er_visit,Acute gastroenteritis - food poisoning,Community Hospital ER,,130/84,88,99.8,,,,,"Ondansetron 4mg IV, Normal saline 1L",Severe nausea and diarrhea after restaurant meal; dehydrated
+2024-01-15,visit,Follow-up with PCP,Dr. Thomas - Wellness Center,,134/84,72,98.6,,,,,,Weight down 5 lbs; CPAP compliance 65%; needs to improve
+2024-01-15,lab,Fasting blood glucose,Wellness Center Lab,,,,,,104,mg/dL,70-100,,Slightly improved
+2024-01-15,lab,ALT,Wellness Center Lab,,,,,,48,U/L,7-35,,Still elevated; ultrasound ordered
+2024-02-10,procedure,Abdominal ultrasound,Wellness Radiology,,,,,,,,,,Mild hepatic steatosis (fatty liver); no focal lesions
+2024-02-10,diagnosis,Non-alcoholic fatty liver disease,Dr. Thomas,K76.0,,,,,,,,,Weight loss is primary treatment; avoid alcohol
+2024-04-20,visit,Annual physical exam,Dr. Thomas,Z00.00,132/82,72,98.6,,,,,Losartan 25mg,Weight down 10 lbs total; BP improving; continues DASH diet
+2024-04-20,lab,Fasting blood glucose,Wellness Center Lab,,,,,,98,mg/dL,70-100,,Normal now with weight loss
+2024-04-20,lab,HbA1c,Wellness Center Lab,,,,,,5.5,%,4.0-5.6,,Normalized
+2024-04-20,lab,Total cholesterol,Wellness Center Lab,,,,,,198,mg/dL,<200,,Borderline; improved
+2024-04-20,lab,LDL cholesterol,Wellness Center Lab,,,,,,118,mg/dL,<100,,Still elevated but improving
+2024-04-20,lab,ALT,Wellness Center Lab,,,,,,42,U/L,7-35,,Improving trend but still elevated
+2024-04-20,lab,Triglycerides,Wellness Center Lab,,,,,,180,mg/dL,<150,,Improving
+2024-07-10,visit,Sleep medicine follow-up,Dr. Kumar,,130/82,70,98.4,,,,,,CPAP compliance improved to 78%; AHI on CPAP now 3; daytime sleepiness resolved
+2024-09-15,visit,Routine follow-up,Dr. Thomas,,128/80,70,98.6,,,,,,Weight down 14 lbs; BMI 30.8; approaching goal; very motivated
+2024-09-15,lab,Liver function panel,Wellness Center Lab,,,,,,,,,,"ALT 38 (still mildly elevated), AST 30 (normal)"
+2024-09-15,lab,ALT,Wellness Center Lab,,,,,,38,U/L,7-35,,Nearly normalized
+2024-11-01,immunization,Influenza vaccine 2024-2025,Wellness Center Pharmacy,,,,,,,,,,Annual flu shot
+2024-12-20,visit,Year-end check,Dr. Thomas,,126/80,68,98.6,,,,,"Losartan 25mg, CPAP",Good progress; weight down 16 lbs; discussing Losartan reduction if BP stays controlled
+2025-01-25,visit,Follow-up visit,Dr. Thomas,,124/78,68,98.4,,,,,,Excellent progress; 2 active treatments; lifestyle changes showing clear benefit
+2025-01-25,lab,HbA1c,Wellness Center Lab,,,,,,5.4,%,4.0-5.6,,Normal; no longer pre-diabetic
+2025-01-25,lab,Total cholesterol,Wellness Center Lab,,,,,,186,mg/dL,<200,,Normal

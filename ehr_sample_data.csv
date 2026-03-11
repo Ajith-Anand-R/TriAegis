@@ -1,0 +1,21 @@
+Patient_ID,Age,Gender,Symptoms,Blood Pressure,Heart Rate,Temperature,Pre-Existing Conditions
+07eaa034-f0ab-4252-9d1c-279305796314,27,Male,"dizziness, seizure",122/79,74,97.2,none
+ac5b33d2-561c-4355-a7e6-763d4ce388e3,85,Other,"confusion, abdominal pain",111/115,82,97.7,"none, diabetes"
+83c88d33-c500-4307-8bdc-825e31133124,29,Female,"severe allergic reaction, nausea, minor injury",195/84,81,98.4,"hypertension, obesity"
+052df52c-f8d5-456f-96f5-26adfee7303a,42,Male,"fatigue, confusion, uncontrolled bleeding",142/116,101,97.6,"asthma, depression"
+03ca5a27-f205-4c92-8343-1f62f96e2704,54,Female,blurred vision,135/87,130,100.3,heart disease
+b607ee4a-0de0-452a-97c7-5c2cb698d40c,36,Other,loss of consciousness,148/106,59,98.9,"depression, asthma"
+58d88972-af55-4c9d-afb9-fcaff56df8f5,67,Other,joint pain,103/116,107,104.5,"asthma, obesity"
+7e0fae10-1eff-4b84-9f4e-435332b70a50,70,Other,joint pain,145/97,71,100.3,"COPD, chronic kidney disease"
+f8567c17-aded-4299-8872-d4aa1de3e420,55,Male,"seizure, joint pain, loss of consciousness",133/66,124,101.5,"chronic kidney disease, none"
+8a919612-8e43-4d41-88c1-d2c523ef29b9,50,Female,"severe headache, fatigue, severe allergic reaction",152/99,139,104.8,anxiety
+ed58cf31-317d-4f2d-996f-2a00b20132f7,89,Male,"abdominal pain, severe allergic reaction",122/90,63,104.0,none
+03e1a480-d8c1-4bad-a96b-c5b3510e6655,30,Female,"confusion, shortness of breath",178/63,79,100.0,asthma
+8bc8080b-2f79-4d02-8643-ea2ad48172b2,27,Other,"severe allergic reaction, dizziness, shortness of breath",149/98,81,100.3,none
+e06627e9-949f-458b-a2f9-e7f6ba17d2a8,42,Other,"uncontrolled bleeding, shortness of breath",162/82,123,99.3,none
+08650da1-2343-4ecb-b11a-4e1629846704,34,Other,"confusion, minor injury",130/77,79,101.6,"hypertension, obesity"
+46de2179-4717-4928-8001-15ece03dec53,32,Other,"nausea, abdominal pain",181/95,157,103.7,thyroid disorder
+755ef6be-c8fc-4e33-bed3-b954c29578a1,90,Female,"nausea, severe allergic reaction",121/117,142,104.7,"hypertension, anxiety"
+acd89462-bc8a-475c-838b-ba44d503972f,55,Female,"joint pain, severe headache",101/60,63,104.3,none
+6a497738-3fc7-4881-832f-fb6bd1b8f38d,89,Male,"chest pain, joint pain",196/64,65,100.2,diabetes
+58887f05-a85b-43b4-b1be-dfa1fec8f369,42,Other,blurred vision,134/109,89,97.7,diabetes

@@ -1,0 +1,22 @@
+Date,Record_Type,Description,Provider,Diagnosis_Code,Vitals_BP,Vitals_HR,Vitals_Temp,Lab_Name,Lab_Value,Lab_Unit,Lab_Normal_Range,Medication,Notes
+2023-03-10,visit,Annual wellness exam,Dr. Meena - Family Clinic,Z00.00,112/72,68,98.4,,,,,,Healthy young adult; no complaints; active lifestyle
+2023-03-10,lab,Complete blood count,Family Clinic Lab,,,,,,,,,,All values within normal limits
+2023-03-10,lab,Fasting blood glucose,Family Clinic Lab,,,,,,88,mg/dL,70-100,,Normal
+2023-03-10,lab,Total cholesterol,Family Clinic Lab,,,,,,172,mg/dL,<200,,Normal
+2023-03-10,lab,TSH,Family Clinic Lab,,,,,,2.1,mIU/L,0.4-4.0,,Normal thyroid function
+2023-03-10,immunization,Tdap booster,Family Clinic Pharmacy,,,,,,,,,,Routine booster
+2023-06-15,visit,Sore throat follow-up,Dr. Meena - Family Clinic,J02.9,110/70,72,99.8,,,,,Amoxicillin 500mg TID x 10 days,Rapid strep test positive; antibiotics prescribed
+2023-09-20,visit,Dermatology referral - mild eczema,Dr. Khan - Dermatology,L30.9,108/68,66,98.6,,,,,Hydrocortisone cream 1%,Small eczema patch on right elbow; topical treatment
+2024-01-05,visit,Flu symptoms,Dr. Meena - Family Clinic,J11.1,114/74,78,100.2,,,,,Ibuprofen 400mg PRN,Influenza A positive; rest and fluids recommended
+2024-03-15,visit,Annual wellness exam,Dr. Meena - Family Clinic,Z00.00,110/70,64,98.4,,,,,,No new complaints; continues regular exercise
+2024-03-15,lab,Fasting blood glucose,Family Clinic Lab,,,,,,82,mg/dL,70-100,,Normal
+2024-03-15,lab,Complete metabolic panel,Family Clinic Lab,,,,,,,,,,All values within normal limits
+2024-03-15,lab,Lipid panel,Family Clinic Lab,,,,,,168,mg/dL,<200,,Total cholesterol normal
+2024-03-15,lab,Vitamin D,Family Clinic Lab,,,,,,28,ng/mL,30-100,,Slightly low; supplementation recommended
+2024-03-15,prescription,Vitamin D3 2000 IU daily,Dr. Meena,,,,,,,,,Vitamin D3 2000 IU,For mild vitamin D insufficiency
+2024-07-22,er_visit,Right ankle sprain from hiking,Community Hospital ER,,116/74,80,98.6,,,,,,X-ray negative for fracture; RICE protocol; ACE bandage
+2024-07-22,procedure,X-ray right ankle AP and lateral,Community Hospital Radiology,,,,,,,,,,No fracture or dislocation seen
+2024-08-05,visit,Ankle follow-up,Dr. Meena - Family Clinic,,112/72,68,98.4,,,,,,Ankle healing well; cleared for gradual return to activity
+2024-11-01,immunization,Influenza vaccine 2024-2025,Family Clinic Pharmacy,,,,,,,,,,Annual flu shot
+2025-01-20,visit,Mild seasonal allergies,Dr. Meena - Family Clinic,J30.1,108/68,66,98.4,,,,,Cetirizine 10mg PRN,Seasonal rhinitis; OTC antihistamine sufficient
+2025-02-10,visit,Wellness check,Dr. Meena - Family Clinic,Z00.00,110/70,66,98.6,,,,,,Healthy; no chronic conditions; BMI 22.4

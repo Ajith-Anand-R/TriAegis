@@ -1,0 +1,35 @@
+Date,Record_Type,Description,Provider,Diagnosis_Code,Vitals_BP,Vitals_HR,Vitals_Temp,Lab_Name,Lab_Value,Lab_Unit,Lab_Normal_Range,Medication,Notes
+2023-02-20,visit,Annual physical,Dr. Iyer - Metro Health Clinic,Z00.00,142/90,78,98.6,,,,,Amlodipine 5mg,Blood pressure elevated; started antihypertensive
+2023-02-20,lab,Fasting blood glucose,Metro Health Lab,,,,,,118,mg/dL,70-100,,Pre-diabetic range; lifestyle modifications counseled
+2023-02-20,lab,HbA1c,Metro Health Lab,,,,,,6.1,%,4.0-5.6,,Pre-diabetic
+2023-02-20,lab,Total cholesterol,Metro Health Lab,,,,,,222,mg/dL,<200,,Borderline high
+2023-02-20,lab,LDL cholesterol,Metro Health Lab,,,,,,138,mg/dL,<100,,Elevated
+2023-02-20,lab,Triglycerides,Metro Health Lab,,,,,,198,mg/dL,<150,,Elevated
+2023-02-20,lab,Creatinine,Metro Health Lab,,,,,,1.1,mg/dL,0.7-1.3,,Normal
+2023-02-20,diagnosis,Essential hypertension,Dr. Iyer,I10,,,,,,,,,Started on Amlodipine 5mg daily
+2023-02-20,diagnosis,Pre-diabetes,Dr. Iyer,R73.03,,,,,,,,,Diet and exercise plan provided
+2023-05-10,visit,Hypertension follow-up,Dr. Iyer,,138/88,76,98.4,,,,,,BP slightly improved; continue current medication
+2023-06-22,visit,Anxiety evaluation,Dr. Desai - Psychiatry,F41.1,136/86,84,98.6,,,,,Sertraline 50mg,Generalized anxiety disorder diagnosed; SSRI started
+2023-09-14,visit,Routine follow-up,Dr. Iyer,,140/88,80,98.6,,,,,,BP still above target; dose increased to Amlodipine 10mg
+2023-09-14,prescription,Amlodipine 10mg daily,Dr. Iyer,,,,,,,,,Amlodipine 10mg,Dose increased from 5mg
+2023-12-05,er_visit,Severe flank pain - renal colic,City Hospital ER,,156/96,92,99.0,,,,,Ketorolac 30mg IV,CT scan showed 6mm left ureteral stone
+2023-12-05,procedure,CT abdomen/pelvis without contrast,City Hospital Radiology,,,,,,,,,,6mm stone in left proximal ureter with mild hydronephrosis
+2023-12-06,hospitalization,Obstructive kidney stone with hydronephrosis,City Hospital,N20.1,144/90,82,98.8,,,,,Tamsulosin 0.4mg,2-day admission; stone passed spontaneously; IV fluids and pain management
+2024-01-15,visit,Urology follow-up post kidney stone,Dr. Nair - Urology,,136/86,76,98.4,,,,,,Stone passed; 24-hour urine collection ordered; increase fluid intake
+2024-01-15,lab,24-hour urine calcium,Urology Lab,,,,,,310,mg/24h,<300,,Mildly elevated; dietary calcium restriction counseled
+2024-03-20,visit,Annual physical,Dr. Iyer - Metro Health Clinic,Z00.00,136/84,76,98.6,,,,,"Amlodipine 10mg, Sertraline 50mg, Tamsulosin 0.4mg",BP better controlled; weight stable; anxiety manageable
+2024-03-20,lab,Fasting blood glucose,Metro Health Lab,,,,,,112,mg/dL,70-100,,Still pre-diabetic; improved slightly with diet changes
+2024-03-20,lab,HbA1c,Metro Health Lab,,,,,,5.9,%,4.0-5.6,,Improved; borderline
+2024-03-20,lab,Total cholesterol,Metro Health Lab,,,,,,210,mg/dL,<200,,Still borderline; discussing statin therapy
+2024-03-20,lab,LDL cholesterol,Metro Health Lab,,,,,,128,mg/dL,<100,,Improved but still elevated
+2024-03-20,lab,PSA,Metro Health Lab,,,,,,1.8,ng/mL,<4.0,,Normal; routine screening for age
+2024-06-10,visit,Anxiety follow-up,Dr. Desai - Psychiatry,,132/82,74,98.4,,,,,,Anxiety well controlled on current dose; continue Sertraline
+2024-08-15,visit,Intermittent knee pain,Dr. Iyer,,138/86,78,98.6,,,,,Naproxen 500mg PRN,Mild osteoarthritis right knee; X-ray shows early degenerative changes
+2024-08-15,procedure,X-ray right knee,Metro Health Radiology,,,,,,,,,,Mild joint space narrowing; early osteoarthritis
+2024-08-15,diagnosis,Osteoarthritis right knee,Dr. Iyer,M17.11,,,,,,,,,Weight management and physical therapy recommended
+2024-10-20,visit,Follow-up visit,Dr. Iyer,,134/84,76,98.4,,,,,,Stable; discussing adding Rosuvastatin for cholesterol
+2024-10-20,prescription,Rosuvastatin 10mg daily,Dr. Iyer,,,,,,,,,Rosuvastatin 10mg,Started for borderline high cholesterol with pre-diabetes risk
+2024-11-10,immunization,Influenza vaccine 2024-2025,Metro Health Pharmacy,,,,,,,,,,Annual flu shot
+2025-01-15,visit,Routine follow-up,Dr. Iyer,,132/82,74,98.6,,,,,"Amlodipine 10mg, Sertraline 50mg, Rosuvastatin 10mg, Tamsulosin 0.4mg",BP at target; lipid panel pending; 4 active medications
+2025-01-15,lab,HbA1c,Metro Health Lab,,,,,,5.8,%,4.0-5.6,,Near normal; dietary compliance helping
+2025-01-15,lab,Total cholesterol,Metro Health Lab,,,,,,188,mg/dL,<200,,Improved on statin therapy
