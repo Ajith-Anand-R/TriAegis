@@ -29,13 +29,7 @@ jobs:
 
       - name: Run focused backend tests
         run: |
-          pytest -q \
-            tests/test_clinical_guardrails.py \
-            tests/test_clinical_handoff.py \
-            tests/test_medication_safety.py \
-            tests/test_followup_planner.py \
-            tests/test_privacy_controls.py \
-            tests/test_api_security_and_contracts.py
+          python -m pytest -q tests/test_clinical_guardrails.py tests/test_clinical_handoff.py tests/test_medication_safety.py tests/test_followup_planner.py tests/test_privacy_controls.py tests/test_api_security_and_contracts.py
 
   frontend:
     runs-on: ubuntu-latest
