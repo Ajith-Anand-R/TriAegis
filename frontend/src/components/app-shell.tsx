@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Mic, MicOff } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
@@ -19,13 +19,17 @@ type AppShellProps = {
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
-  const [hasToken, setHasToken] = useState(false);
   const { t } = useI18n();
   const voice = useVoiceAssistant();
+  const isHydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
 
-  const isLoginRoute = pathname === "/login";
+  const isLoginRoute = pathname === "/login" || pathname.startsWith("/login/");
   const isQueueRoute = pathname === "/queue";
+  const hasToken = isHydrated ? Boolean(getAuthToken()) : false;
 
   const handleMicClick = useCallback(() => {
     if (voice.state.active) {
@@ -43,17 +47,19 @@ export function AppShell({ children }: AppShellProps) {
   }, [voice, pathname, router]);
 
   useEffect(() => {
-    setMounted(true);
-    setHasToken(Boolean(getAuthToken()));
-  }, []);
+    if (!isHydrated) {
+      return;
+    }
 
-  useEffect(() => {
-    if (mounted && !isLoginRoute && !hasToken) {
+    if (!isLoginRoute && !hasToken) {
       router.replace("/login");
     }
-  }, [mounted, isLoginRoute, hasToken, router]);
+    if (isLoginRoute && hasToken) {
+      router.replace("/");
+    }
+  }, [isHydrated, isLoginRoute, hasToken, router]);
 
-  if (!isLoginRoute && (!mounted || !hasToken)) {
+  if (!isHydrated) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Loader2 className="h-7 w-7 animate-spin text-primary" />
@@ -61,7 +67,7 @@ export function AppShell({ children }: AppShellProps) {
     );
   }
 
-  if (!mounted) {
+  if (!isLoginRoute && !hasToken) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Loader2 className="h-7 w-7 animate-spin text-primary" />
@@ -72,36 +78,33 @@ export function AppShell({ children }: AppShellProps) {
   if (isLoginRoute) {
     return (
       <main className="flex-1">
-        <div className="fixed right-4 top-4 z-50 flex items-center gap-2 rtl:right-auto rtl:left-4">
+        <a
+          href="#app-main-content"
+          className="sr-only fixed left-2 top-2 z-[90] rounded-md bg-background px-3 py-2 text-sm font-medium text-foreground shadow-lg focus:not-sr-only"
+        >
+          Skip to main content
+        </a>
+        <div className="fixed right-3 top-3 z-50 flex items-center gap-2 rtl:right-auto rtl:left-3 sm:right-4 sm:top-4 sm:rtl:left-4">
           <ThemeToggleButton />
-          <Button
-            type="button"
-            variant="destructive"
-            size="icon"
-            aria-label={t("common.microphone")}
-            title={voice.state.active ? "Stop Voice Assistant" : "Start Voice Assistant"}
-            onClick={handleMicClick}
-            className={`size-16 rounded-full text-white shadow-lg transition-all ${
-              voice.state.active
-                ? "bg-red-600 hover:bg-red-700 animate-pulse ring-4 ring-red-400/30"
-                : "bg-gradient-to-br from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700"
-            }`}
-          >
-            {voice.state.active ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
-          </Button>
           <LanguageMenuButton />
         </div>
         <VoiceAssistantOverlay />
-        <div className="mx-auto max-w-[1440px] px-6 py-6">{children}</div>
+        <div id="app-main-content" tabIndex={-1} className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 sm:py-6">{children}</div>
       </main>
     );
   }
 
   return (
     <div className="flex min-h-screen">
+      <a
+        href="#app-main-content"
+        className="sr-only fixed left-2 top-2 z-[90] rounded-md bg-background px-3 py-2 text-sm font-medium text-foreground shadow-lg focus:not-sr-only"
+      >
+        Skip to main content
+      </a>
       <Sidebar />
-      <main className="ml-[240px] flex-1 transition-all duration-300 rtl:ml-0 rtl:mr-[240px]">
-        <div className="fixed right-4 top-4 z-50 flex items-center gap-2 rtl:right-auto rtl:left-4">
+      <main className="flex-1 transition-all duration-300 lg:ml-[240px] rtl:lg:ml-0 rtl:lg:mr-[240px]">
+        <div className="fixed right-3 top-3 z-50 flex items-center gap-2 rtl:right-auto rtl:left-3 sm:right-4 sm:top-4 sm:rtl:left-4">
           {!isQueueRoute && <ThemeToggleButton />}
           {!isQueueRoute && (
             <Button
@@ -111,19 +114,19 @@ export function AppShell({ children }: AppShellProps) {
               aria-label={t("common.microphone")}
               title={voice.state.active ? "Stop Voice Assistant" : "Start Voice Assistant"}
               onClick={handleMicClick}
-              className={`size-16 rounded-full text-white shadow-lg transition-all ${
+              className={`size-12 rounded-full text-white shadow-lg transition-all sm:size-16 ${
                 voice.state.active
                   ? "bg-red-600 hover:bg-red-700 animate-pulse ring-4 ring-red-400/30"
                   : "bg-gradient-to-br from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700"
               }`}
             >
-              {voice.state.active ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
+              {voice.state.active ? <MicOff className="h-6 w-6 sm:h-8 sm:w-8" /> : <Mic className="h-6 w-6 sm:h-8 sm:w-8" />}
             </Button>
           )}
           <LanguageMenuButton />
         </div>
         <VoiceAssistantOverlay />
-        <div className="mx-auto max-w-[1440px] px-6 py-6">{children}</div>
+        <div id="app-main-content" tabIndex={-1} className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 sm:py-6">{children}</div>
       </main>
     </div>
   );

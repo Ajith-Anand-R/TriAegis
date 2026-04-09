@@ -123,11 +123,58 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  :where(button, [role="button"], a, input, select, textarea) {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :where(button, [role="button"], a, input, select, textarea):focus-visible {
+    @apply outline-none ring-2 ring-primary/60 ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-triaegis-display), var(--font-geist-sans), sans-serif;
+    letter-spacing: -0.015em;
+  }
 }
 
 /* Smooth scrolling */
 html {
   scroll-behavior: smooth;
+}
+
+@media (max-width: 640px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.mobile-scroll {
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Custom scrollbar */

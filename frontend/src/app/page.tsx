@@ -3,10 +3,9 @@
 import { useEffect, useState } from "react";
 import { getCurrentUser, getDashboard } from "@/lib/api";
 import { MetricCard } from "@/components/metric-card";
-import { Activity, AlertTriangle, Building2, Users } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, Building2, ClipboardList, ClipboardPlus, History, RefreshCw, Stethoscope, Users } from "lucide-react";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
-import { Stethoscope, ClipboardList, BarChart3, History, ClipboardPlus } from "lucide-react";
 import { useI18n } from "@/components/language-provider";
 import { TranslationKey } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -54,30 +53,54 @@ export default function HomePage() {
     ? QUICK_LINKS.filter((item) => item.href !== "/analysis")
     : QUICK_LINKS;
 
+  const liveStatus = error || (loading ? "Loading dashboard" : (lastUpdated ? `Dashboard updated at ${lastUpdated}` : ""));
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">
-          <span className="bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent">
-            TriAegis
-          </span>{" "}
-          {t("dashboard.title")}
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t("dashboard.subtitle")}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground/80">
-          Source: backend `/api/dashboard`{lastUpdated ? ` • Last updated ${lastUpdated}` : ""}
-        </p>
-      </div>
+    <div className="space-y-7">
+      <p role="status" aria-live="polite" className="sr-only">{liveStatus}</p>
+      <section className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-blue-500/15 via-card to-cyan-500/10 p-4 sm:p-6">
+        <div className="pointer-events-none absolute -right-16 -top-12 h-44 w-44 rounded-full bg-blue-500/20 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-16 -left-10 h-44 w-44 rounded-full bg-cyan-400/15 blur-2xl" />
+
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
+              Operations Hub
+            </p>
+            <h1 className="font-display mt-1 text-2xl font-semibold tracking-tight md:text-3xl">
+              TriAegis {t("dashboard.title")}
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              {t("dashboard.subtitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/80">
+              Source: backend /api/dashboard{lastUpdated ? ` • Last updated ${lastUpdated}` : ""}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-200">
+              Auto refresh: 15s
+            </span>
+            {role ? (
+              <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                Role: {role}
+              </span>
+            ) : null}
+            <Button variant="outline" size="sm" onClick={loadDashboard} disabled={loading} className="min-h-10 border-primary/30 px-3 sm:min-h-9">
+              {loading ? <RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
+              Refresh
+            </Button>
+          </div>
+        </div>
+      </section>
 
       {/* Metrics */}
       {error ? (
         <Card className="border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
             <span>{error}</span>
-            <Button variant="outline" size="sm" onClick={loadDashboard}>
+            <Button variant="outline" size="sm" onClick={loadDashboard} className="min-h-10 px-3 sm:min-h-9">
               Retry
             </Button>
           </div>
@@ -113,11 +136,11 @@ export default function HomePage() {
 
       {/* Quick Links */}
       <div>
-        <h2 className="mb-4 text-lg font-semibold">{t("dashboard.quickAccess")}</h2>
+        <h2 className="font-display mb-4 text-lg font-semibold">{t("dashboard.quickAccess")}</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {quickLinks.map((link) => (
             <Link key={link.href} href={link.href}>
-              <Card className="group relative overflow-hidden border-border/50 bg-card p-5 transition-all duration-300 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+              <Card className="group relative min-h-[124px] overflow-hidden border-border/50 bg-card p-4 transition-all duration-300 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 sm:p-5">
                 <div className={`absolute inset-0 bg-gradient-to-br ${link.color} opacity-0 transition-opacity group-hover:opacity-100`} />
                 <div className="relative flex flex-col gap-3">
                   <link.icon className="h-6 w-6 text-muted-foreground transition-colors group-hover:text-primary" />

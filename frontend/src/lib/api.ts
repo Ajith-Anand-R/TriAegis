@@ -1,5 +1,12 @@
 // API client for TriAegis FastAPI backend
 
+import type {
+    RouteAdmitResponse,
+    RouteDistributeResponse,
+    RouteDistributionPatientPayload,
+    RouteResponse,
+} from "./types";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const AUTH_TOKEN_KEY = "triaegis_access_token";
 const AUTH_ROLE_KEY = "triaegis_user_role";
@@ -69,6 +76,44 @@ export async function getCurrentUser() {
     return request<{ username: string; role: string }>("/api/auth/me");
 }
 
+export async function getAuthUsers() {
+    return request<{ users: Array<{ username: string; role: string; is_active: boolean; created_at: string; updated_at: string }> }>("/api/auth/users");
+}
+
+export async function registerUser(payload: { username: string; password: string; role: string }) {
+    return request<{ created: { username: string; role: string; is_active: boolean } }>("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function registerUserWithAdminCredentials(payload: {
+    admin_username: string;
+    admin_password: string;
+    username: string;
+    password: string;
+    role: string;
+}) {
+    return request<{ created: { username: string; role: string; is_active: boolean } }>("/api/auth/register-by-admin", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function changePassword(payload: { current_password: string; new_password: string }) {
+    return request<{ message: string }>("/api/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function updateUserStatus(payload: { username: string; is_active: boolean }) {
+    return request<{ updated: { username: string; role: string; is_active: boolean } }>("/api/auth/users/status", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+    });
+}
+
 function getErrorDetail(payload: unknown, fallback: string): string {
     if (payload && typeof payload === "object" && "detail" in payload) {
         const detail = (payload as { detail?: unknown }).detail;
@@ -79,17 +124,22 @@ function getErrorDetail(payload: unknown, fallback: string): string {
     return fallback;
 }
 
-function handleAuthError(status: number, detail: string): void {
+function handleAuthError(status: number): void {
     if (status !== 401) {
         return;
     }
-    const normalized = detail.toLowerCase();
-    if (normalized.includes("token") || normalized.includes("bearer")) {
-        clearAuthToken();
-        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-            window.location.href = "/login";
-        }
+
+    clearAuthToken();
+    if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.href = "/login";
     }
+}
+
+function isMethodNotAllowedError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false;
+    }
+    return /method not allowed|405/i.test(error.message);
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -107,7 +157,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         const detail = getErrorDetail(err, res.statusText);
-        handleAuthError(res.status, detail);
+        handleAuthError(res.status);
         throw new Error(detail || JSON.stringify(err));
     }
     return res.json();
@@ -140,6 +190,44 @@ export async function predictAndSave(patient: Record<string, unknown>) {
     return request<Record<string, unknown>>("/api/predict/save", {
         method: "POST",
         body: JSON.stringify(patient),
+    });
+}
+
+export async function routePatient(payload: {
+    patient_id?: string;
+    risk_level: string;
+    priority_score: number;
+    department: string;
+    preferred_hospital_id?: string;
+    queue_ahead?: number;
+}) {
+    return request<RouteResponse>("/api/route", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function routeAndAdmit(payload: {
+    patient_id?: string;
+    risk_level: string;
+    priority_score: number;
+    department: string;
+    preferred_hospital_id?: string;
+    queue_ahead?: number;
+}) {
+    return request<RouteAdmitResponse>("/api/route/admit", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function distributeRouteInflow(payload: {
+    patients: RouteDistributionPatientPayload[];
+    persist_routes?: boolean;
+}) {
+    return request<RouteDistributeResponse>("/api/route/distribute", {
+        method: "POST",
+        body: JSON.stringify(payload),
     });
 }
 
@@ -187,7 +275,7 @@ export async function predictBatch(file: File) {
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         const detail = getErrorDetail(err, res.statusText);
-        handleAuthError(res.status, detail);
+        handleAuthError(res.status);
         throw new Error(detail || JSON.stringify(err));
     }
     return res.json();
@@ -231,16 +319,46 @@ export async function clearOldRecords(days = 90) {
 }
 
 export async function adminDeleteSpecific(payload: { patient_id?: string; prediction_id?: number; queue_id?: number }) {
-    return request<Record<string, unknown>>("/api/admin/data/specific", {
-        method: "DELETE",
-        body: JSON.stringify(payload),
-    });
+    const path = "/api/admin/data/specific";
+    const requestWithMethod = async (method: "POST" | "DELETE") => {
+        return request<Record<string, unknown>>(path, {
+            method,
+            body: JSON.stringify(payload),
+        });
+    };
+
+    try {
+        return await requestWithMethod("POST");
+    } catch (error: unknown) {
+        if (isMethodNotAllowedError(error)) {
+            return requestWithMethod("DELETE");
+        }
+        throw error;
+    }
 }
 
 export async function adminDeleteRecent(days = 30, scope: "all" | "queue" | "predictions" | "patients" = "all") {
-    return request<Record<string, unknown>>(`/api/admin/data/recent?days=${days}&scope=${scope}`, {
-        method: "DELETE",
-    });
+    const path = `/api/admin/data/recent?days=${days}&scope=${scope}`;
+    try {
+        return await request<Record<string, unknown>>(path, { method: "POST" });
+    } catch (error: unknown) {
+        if (isMethodNotAllowedError(error)) {
+            return request<Record<string, unknown>>(path, { method: "DELETE" });
+        }
+        throw error;
+    }
+}
+
+export async function adminDeleteAllData() {
+    const path = "/api/admin/data/all";
+    try {
+        return await request<Record<string, unknown>>(path, { method: "POST" });
+    } catch (error: unknown) {
+        if (isMethodNotAllowedError(error)) {
+            return request<Record<string, unknown>>(path, { method: "DELETE" });
+        }
+        throw error;
+    }
 }
 
 // Upload
@@ -257,7 +375,7 @@ export async function uploadDocument(file: File) {
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         const detail = getErrorDetail(err, res.statusText);
-        handleAuthError(res.status, detail);
+        handleAuthError(res.status);
         throw new Error(detail || JSON.stringify(err));
     }
     return res.json();
@@ -285,7 +403,7 @@ export async function exportFairnessCsv(reportType: string, sampleSize = 2000) {
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         const detail = getErrorDetail(err, res.statusText);
-        handleAuthError(res.status, detail);
+        handleAuthError(res.status);
         throw new Error(detail || JSON.stringify(err));
     }
     return res.blob();
@@ -316,7 +434,7 @@ export async function exportSimulationCsv(reportType: "queue" | "timeline") {
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         const detail = getErrorDetail(err, res.statusText);
-        handleAuthError(res.status, detail);
+        handleAuthError(res.status);
         throw new Error(detail || JSON.stringify(err));
     }
     return res.blob();

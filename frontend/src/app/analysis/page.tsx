@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { getConstants, getCurrentUser, getDashboard, predictSingle, predictAndSave, predictBatch, getSymptomDialogue } from "@/lib/api";
+import { getConstants, getCurrentUser, getDashboard, predictSingle, predictAndSave, predictBatch, getSymptomDialogue, routeAndAdmit, routePatient } from "@/lib/api";
+import type { RouteDecision } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,8 @@ import {
     Upload,
     FileSpreadsheet,
     Zap,
+    Route,
+    Building2,
 } from "lucide-react";
 import { useI18n } from "@/components/language-provider";
 import { useRouter } from "next/navigation";
@@ -54,6 +57,7 @@ export default function AnalysisPage() {
 
     // Form state
     const [patientId, setPatientId] = useState("P001");
+    const [patientName, setPatientName] = useState("");
     const [age, setAge] = useState(40);
     const [gender, setGender] = useState("Male");
     const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
@@ -75,6 +79,11 @@ export default function AnalysisPage() {
     // Result
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [result, setResult] = useState<any>(null);
+    const [routeDecision, setRouteDecision] = useState<RouteDecision | null>(null);
+    const [routeLoading, setRouteLoading] = useState(false);
+    const [routeAdmitLoading, setRouteAdmitLoading] = useState(false);
+    const [routeError, setRouteError] = useState<string | null>(null);
+    const [routeMessage, setRouteMessage] = useState<string | null>(null);
 
     useEffect(() => {
         getConstants().then((data) => {
@@ -95,6 +104,7 @@ export default function AnalysisPage() {
 
     const buildPayload = useCallback(() => ({
         Patient_ID: patientId,
+        "Patient Name": patientName.trim(),
         Age: age,
         Gender: gender,
         Symptoms: selectedSymptoms.join(","),
@@ -102,10 +112,13 @@ export default function AnalysisPage() {
         "Heart Rate": heartRate,
         Temperature: temperature,
         "Pre-Existing Conditions": selectedConditions.length ? selectedConditions.join(",") : "none",
-    }), [patientId, age, gender, selectedSymptoms, systolic, diastolic, heartRate, temperature, selectedConditions]);
+    }), [patientId, patientName, age, gender, selectedSymptoms, systolic, diastolic, heartRate, temperature, selectedConditions]);
 
     const handleAnalyze = async () => {
         setLoading(true);
+        setRouteDecision(null);
+        setRouteError(null);
+        setRouteMessage(null);
         try {
             const data = await predictSingle(buildPayload());
             setResult(data);
@@ -119,6 +132,9 @@ export default function AnalysisPage() {
 
     const handleSave = async () => {
         setSaving(true);
+        setRouteDecision(null);
+        setRouteError(null);
+        setRouteMessage(null);
         try {
             const data = await predictAndSave(buildPayload());
             setResult(data);
@@ -127,6 +143,77 @@ export default function AnalysisPage() {
             alert(msg);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const buildRoutePayload = () => {
+        const prediction = result?.prediction;
+        if (!prediction) {
+            throw new Error("Run analysis first to generate routing context");
+        }
+
+        const priorityScore = Number(prediction.priority_score || 1);
+        const riskLevel =
+            priorityScore >= 8.5
+                ? "High"
+                : priorityScore >= 5
+                    ? "Medium"
+                    : String(prediction.risk_level || "Low");
+
+        return {
+            patient_id: String(result?.patient?.Patient_ID || patientId),
+            risk_level: riskLevel,
+            priority_score: priorityScore,
+            department: String(prediction.department || "General Medicine"),
+            queue_ahead: Math.max(0, Number(prediction.queue_position || 1) - 1),
+        };
+    };
+
+    const handleRecommendRoute = async () => {
+        setRouteLoading(true);
+        setRouteError(null);
+        setRouteMessage(null);
+
+        try {
+            const response = await routePatient(buildRoutePayload());
+            const routing = response.routing as RouteDecision | undefined;
+            if (!routing) {
+                throw new Error("Routing response was empty");
+            }
+            setRouteDecision(routing);
+            setRouteMessage(`Recommended ${routing.recommended_hospital_name} / ${routing.recommended_ward_name}`);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Route recommendation failed";
+            setRouteError(message);
+        } finally {
+            setRouteLoading(false);
+        }
+    };
+
+    const handleRouteAndAdmit = async () => {
+        setRouteAdmitLoading(true);
+        setRouteError(null);
+        setRouteMessage(null);
+
+        try {
+            const response = await routeAndAdmit(buildRoutePayload());
+            const routing = response.routing as RouteDecision | undefined;
+            if (routing) {
+                setRouteDecision(routing);
+            }
+
+            if (response.admitted) {
+                const admission = (response.admission || {}) as Record<string, unknown>;
+                const bedLabel = String(admission.bed_label || admission.bed_id || "bed reserved");
+                setRouteMessage(`Admitted via route workflow. Reserved ${bedLabel}.`);
+            } else {
+                setRouteError(String(response.admit_error || "Route generated but direct admission was not possible"));
+            }
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Route-to-admit failed";
+            setRouteError(message);
+        } finally {
+            setRouteAdmitLoading(false);
         }
     };
 
@@ -152,6 +239,7 @@ export default function AnalysisPage() {
     const handleSymptomDeepening = async () => {
         const complaint = selectedSymptoms[0] || "general symptoms";
         setDialogueLoading(true);
+        setDialogueData(null);
         try {
             const response = await getSymptomDialogue({
                 presenting_complaint: complaint,
@@ -168,7 +256,16 @@ export default function AnalysisPage() {
             setDialogueData(response);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : "Symptom deepening failed";
-            alert(msg);
+            setDialogueData({
+                source: "error",
+                error: msg,
+                follow_up_questions: [],
+                structured: {
+                    extracted: { chief_complaint: complaint },
+                    red_flags: [],
+                    urgency_hint: "requires_clinical_assessment",
+                },
+            });
         } finally {
             setDialogueLoading(false);
         }
@@ -245,22 +342,51 @@ export default function AnalysisPage() {
         })
     ) || [];
 
-    return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div>
-                <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-                    <Stethoscope className="h-6 w-6 text-primary" />
-                    {t("analysis.title")}
-                </h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                    {t("analysis.subtitle")}
-                </p>
-            </div>
+    const selectedRouteCandidate =
+        routeDecision &&
+            routeDecision.explanation_fields &&
+            typeof routeDecision.explanation_fields === "object" &&
+            "selected_candidate" in routeDecision.explanation_fields
+            ? (routeDecision.explanation_fields.selected_candidate as Record<string, unknown>)
+            : null;
 
-            <Card className="border-border/50 bg-card p-4">
+    const routePolicyFlags = selectedRouteCandidate && Array.isArray(selectedRouteCandidate.policy_flags)
+        ? selectedRouteCandidate.policy_flags.map((flag) => String(flag))
+        : [];
+    const liveStatusMessage = routeError || routeMessage || batchError || "";
+
+    return (
+        <div className="space-y-7" aria-busy={loading || saving || batchLoading}>
+            <p role="status" aria-live="polite" className="sr-only">{liveStatusMessage}</p>
+            <section className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-blue-500/15 via-card to-cyan-500/10 p-4 sm:p-6">
+                <div className="pointer-events-none absolute -right-16 -top-12 h-44 w-44 rounded-full bg-blue-500/20 blur-2xl" />
+                <div className="pointer-events-none absolute -bottom-16 -left-8 h-48 w-48 rounded-full bg-cyan-400/15 blur-3xl" />
+
+                <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                        <p className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
+                            Triage Intelligence Workspace
+                        </p>
+                        <h1 className="font-display mt-1 flex items-center gap-2 text-2xl font-semibold tracking-tight md:text-3xl">
+                            <Stethoscope className="h-7 w-7 text-primary" />
+                            {t("analysis.title")}
+                        </h1>
+                        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                            {t("analysis.subtitle")}
+                        </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+                        <span className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-blue-200">Single Analysis</span>
+                        <span className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1.5 text-cyan-200">Route and Admit</span>
+                        <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-emerald-200">Explainability</span>
+                    </div>
+                </div>
+            </section>
+
+            <Card className="border-border/60 bg-gradient-to-r from-card to-card/90 p-4 shadow-sm">
                 <div className="flex flex-wrap items-center gap-3">
-                    <p className="text-sm font-medium">{t("batch.uploadTitle")}</p>
+                    <p className="font-display text-sm font-semibold">{t("batch.uploadTitle")}</p>
                     <label className="cursor-pointer rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-all hover:bg-primary/20">
                         <FileSpreadsheet className="mr-1 inline h-3.5 w-3.5" />
                         {t("batch.chooseFile")}
@@ -277,18 +403,18 @@ export default function AnalysisPage() {
                         size="sm"
                         onClick={handleBatchUpload}
                         disabled={!batchFile || batchLoading}
-                        className="bg-gradient-to-r from-violet-600 to-purple-600 text-white"
+                        className="min-h-10 bg-gradient-to-r from-blue-600 to-cyan-600 px-3 text-white shadow-lg shadow-blue-500/20 hover:from-blue-500 hover:to-cyan-500 sm:min-h-9"
                     >
                         {batchLoading ? <><Upload className="mr-1 h-3.5 w-3.5 animate-pulse" /> {t("batch.processing")}</> : <><Zap className="mr-1 h-3.5 w-3.5" /> {t("batch.run")}</>}
                     </Button>
                 </div>
-                {batchError ? <p className="mt-2 text-sm text-destructive">{batchError}</p> : null}
+                {batchError ? <p className="mt-2 text-sm text-destructive" role="alert">{batchError}</p> : null}
                 {batchData?.risk_counts ? (
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                        <div className="rounded-md bg-muted/30 p-2">Total: <span className="font-semibold">{batchData.risk_counts.total}</span></div>
-                        <div className="rounded-md bg-red-500/10 p-2">High: <span className="font-semibold">{batchData.risk_counts.high}</span></div>
-                        <div className="rounded-md bg-amber-500/10 p-2">Medium: <span className="font-semibold">{batchData.risk_counts.medium}</span></div>
-                        <div className="rounded-md bg-emerald-500/10 p-2">Low: <span className="font-semibold">{batchData.risk_counts.low}</span></div>
+                        <div className="rounded-md border border-border/60 bg-muted/30 p-2">Total: <span className="font-semibold">{batchData.risk_counts.total}</span></div>
+                        <div className="rounded-md border border-red-500/20 bg-red-500/10 p-2">High: <span className="font-semibold">{batchData.risk_counts.high}</span></div>
+                        <div className="rounded-md border border-amber-500/20 bg-amber-500/10 p-2">Medium: <span className="font-semibold">{batchData.risk_counts.medium}</span></div>
+                        <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 p-2">Low: <span className="font-semibold">{batchData.risk_counts.low}</span></div>
                     </div>
                 ) : null}
             </Card>
@@ -296,15 +422,15 @@ export default function AnalysisPage() {
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
                 {/* ===== Column 1: Input ===== */}
                 <div className="xl:col-span-4">
-                    <Card className="border-border/50 bg-card p-6">
-                        <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
+                    <Card className="h-full border-border/60 bg-gradient-to-b from-card to-card/90 p-4 shadow-sm sm:p-6">
+                        <h3 className="font-display mb-4 flex items-center gap-2 text-base font-semibold">
                             <User className="h-4 w-4 text-primary" /> {t("analysis.patientInput")}
                         </h3>
 
                         <div className="space-y-4">
                             {/* Patient ID */}
                             <div>
-                                <Label className="text-xs text-muted-foreground mb-1.5">{t("analysis.patientId")}</Label>
+                                <Label className="mb-1.5 block text-xs text-muted-foreground">{t("analysis.patientId")}</Label>
                                 <Input
                                     value={patientId}
                                     onChange={(e) => setPatientId(e.target.value)}
@@ -313,10 +439,20 @@ export default function AnalysisPage() {
                                 />
                             </div>
 
+                            <div>
+                                <Label className="mb-1.5 block text-xs text-muted-foreground">Patient Name</Label>
+                                <Input
+                                    value={patientName}
+                                    onChange={(e) => setPatientName(e.target.value)}
+                                    className="bg-input/50"
+                                    placeholder="e.g. John Doe"
+                                />
+                            </div>
+
                             {/* Age & Gender */}
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
-                                    <Label className="text-xs text-muted-foreground mb-1.5">{t("analysis.age")}</Label>
+                                    <Label className="mb-1.5 block text-xs text-muted-foreground">{t("analysis.age")}</Label>
                                     <Input
                                         type="number"
                                         min={0}
@@ -327,14 +463,14 @@ export default function AnalysisPage() {
                                     />
                                 </div>
                                 <div>
-                                    <Label htmlFor="analysis-gender" className="text-xs text-muted-foreground mb-1.5">{t("analysis.gender")}</Label>
+                                    <Label htmlFor="analysis-gender" className="mb-1.5 block text-xs text-muted-foreground">{t("analysis.gender")}</Label>
                                     <select
                                         id="analysis-gender"
                                         aria-label={t("analysis.gender")}
                                         title={t("analysis.gender")}
                                         value={gender}
                                         onChange={(e) => setGender(e.target.value)}
-                                        className="flex h-9 w-full rounded-md border border-input bg-input/50 px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        className="flex h-10 w-full rounded-md border border-input bg-input/50 px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:h-9"
                                     >
                                         <option value="Male">{t("common.male")}</option>
                                         <option value="Female">{t("common.female")}</option>
@@ -345,7 +481,7 @@ export default function AnalysisPage() {
 
                             {/* Symptoms */}
                             <div>
-                                <Label className="text-xs text-muted-foreground mb-1.5">
+                                <Label className="mb-1.5 block text-xs text-muted-foreground">
                                     {t("analysis.symptoms")} ({selectedSymptoms.length} {t("common.selected")})
                                 </Label>
                                 {/* Voice assistant status indicator (when active) */}
@@ -365,6 +501,7 @@ export default function AnalysisPage() {
                                                 key={s}
                                                 type="button"
                                                 onClick={() => toggleItem(selectedSymptoms, s, setSelectedSymptoms)}
+                                                aria-pressed={selectedSymptoms.includes(s)}
                                                 className={`rounded-md px-2 py-1 text-xs transition-all ${selectedSymptoms.includes(s)
                                                     ? "bg-primary/20 text-primary border border-primary/30 font-medium"
                                                     : "bg-muted/50 text-muted-foreground hover:bg-muted border border-transparent"
@@ -382,27 +519,27 @@ export default function AnalysisPage() {
                             <h4 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                                 <Heart className="h-3.5 w-3.5" /> {t("analysis.vitals")}
                             </h4>
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
-                                    <Label className="text-xs text-muted-foreground mb-1.5">
+                                    <Label className="mb-1.5 block text-xs text-muted-foreground">
                                         <Gauge className="inline h-3 w-3 mr-1" />{t("analysis.bpSystolic")}
                                     </Label>
                                     <Input type="number" min={70} max={260} value={systolic} onChange={(e) => setSystolic(Number(e.target.value))} className="bg-input/50" />
                                 </div>
                                 <div>
-                                    <Label className="text-xs text-muted-foreground mb-1.5">{t("analysis.bpDiastolic")}</Label>
+                                    <Label className="mb-1.5 block text-xs text-muted-foreground">{t("analysis.bpDiastolic")}</Label>
                                     <Input type="number" min={40} max={160} value={diastolic} onChange={(e) => setDiastolic(Number(e.target.value))} className="bg-input/50" />
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
-                                    <Label className="text-xs text-muted-foreground mb-1.5">
+                                    <Label className="mb-1.5 block text-xs text-muted-foreground">
                                         <Heart className="inline h-3 w-3 mr-1" />{t("analysis.heartRate")}
                                     </Label>
                                     <Input type="number" min={30} max={220} value={heartRate} onChange={(e) => setHeartRate(Number(e.target.value))} className="bg-input/50" />
                                 </div>
                                 <div>
-                                    <Label className="text-xs text-muted-foreground mb-1.5">
+                                    <Label className="mb-1.5 block text-xs text-muted-foreground">
                                         <Thermometer className="inline h-3 w-3 mr-1" />{t("analysis.tempF")}
                                     </Label>
                                     <Input type="number" min={90} max={112} step={0.1} value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} className="bg-input/50" />
@@ -412,7 +549,7 @@ export default function AnalysisPage() {
                             {/* Conditions */}
                             <Separator />
                             <div>
-                                <Label className="text-xs text-muted-foreground mb-1.5">
+                                <Label className="mb-1.5 block text-xs text-muted-foreground">
                                     <Shield className="inline h-3 w-3 mr-1" />
                                     {t("analysis.conditions")} ({selectedConditions.length})
                                 </Label>
@@ -422,6 +559,7 @@ export default function AnalysisPage() {
                                             key={c}
                                             type="button"
                                             onClick={() => toggleItem(selectedConditions, c, setSelectedConditions)}
+                                            aria-pressed={selectedConditions.includes(c)}
                                             className={`rounded-md px-2 py-1 text-xs transition-all ${selectedConditions.includes(c)
                                                 ? "bg-primary/20 text-primary border border-primary/30 font-medium"
                                                 : "bg-muted/50 text-muted-foreground hover:bg-muted border border-transparent"
@@ -452,7 +590,7 @@ export default function AnalysisPage() {
                                 <Button
                                 onClick={handleAnalyze}
                                 disabled={loading}
-                                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold shadow-lg shadow-blue-500/20 transition-all"
+                                className="min-h-10 w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold shadow-lg shadow-blue-500/20 transition-all hover:from-blue-500 hover:to-indigo-500 sm:min-h-9"
                                 size="lg"
                             >
                                 {loading ? (
@@ -465,19 +603,28 @@ export default function AnalysisPage() {
 
                             {dialogueData ? (
                                 <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs">
-                                    <p className="font-semibold text-primary">Follow-up Questions</p>
-                                    <ul className="mt-2 list-disc space-y-1 pl-4 text-muted-foreground">
-                                        {Array.isArray(dialogueData.follow_up_questions) && dialogueData.follow_up_questions.length > 0 ? (
-                                            dialogueData.follow_up_questions.map((q, idx) => (
-                                                <li key={idx}>{String(q)}</li>
-                                            ))
-                                        ) : (
-                                            <li>No additional follow-up questions generated.</li>
-                                        )}
-                                    </ul>
-                                    <p className="mt-2 text-[11px] text-muted-foreground">
-                                        Source: {String(dialogueData.source || "unknown")}
-                                    </p>
+                                    {"error" in dialogueData && dialogueData.error ? (
+                                        <div className="text-amber-300">
+                                            <p className="font-semibold">Model Error</p>
+                                            <p className="mt-1 text-muted-foreground">{String(dialogueData.error)}</p>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <p className="font-semibold text-primary">Follow-up Questions</p>
+                                            <ul className="mt-2 list-disc space-y-1 pl-4 text-muted-foreground">
+                                                {Array.isArray(dialogueData.follow_up_questions) && dialogueData.follow_up_questions.length > 0 ? (
+                                                    dialogueData.follow_up_questions.map((q, idx) => (
+                                                        <li key={idx}>{String(q)}</li>
+                                                    ))
+                                                ) : (
+                                                    <li>No additional follow-up questions generated.</li>
+                                                )}
+                                            </ul>
+                                            <p className="mt-2 text-[11px] text-muted-foreground">
+                                                Source: {String(dialogueData.source || "unknown")}
+                                            </p>
+                                        </>
+                                    )}
                                 </div>
                             ) : null}
                         </div>
@@ -486,14 +633,14 @@ export default function AnalysisPage() {
 
                 {/* ===== Column 2: Results ===== */}
                 <div className="xl:col-span-4">
-                    <Card className="border-border/50 bg-card p-6">
-                        <h3 className="mb-4 text-base font-semibold">{t("analysis.resultsTitle")}</h3>
+                    <Card className="h-full border-border/60 bg-gradient-to-b from-card to-card/90 p-4 shadow-sm sm:p-6">
+                        <h3 className="font-display mb-4 text-base font-semibold">{t("analysis.resultsTitle")}</h3>
 
                         {pred ? (
                             <div className="space-y-5">
                                 <RiskBadge level={displayRiskLevel || pred.risk_level} size="lg" />
 
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                     <MetricCard title={t("analysis.priorityScore")} value={`${pred.priority_score}/10`} variant={pred.priority_score >= 8 ? "danger" : pred.priority_score >= 5 ? "warning" : "success"} />
                                     <MetricCard title={t("analysis.confidence")} value={`${(pred.confidence * 100).toFixed(1)}%`} variant="info" />
                                 </div>
@@ -583,14 +730,87 @@ export default function AnalysisPage() {
                                     <p className="mt-0.5 text-xs text-muted-foreground">{pred.department_reason}</p>
                                 </div>
 
+                                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                        <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-primary">
+                                            <Route className="h-3.5 w-3.5" />
+                                            Route Recommendation
+                                        </p>
+                                        <div className="flex w-full flex-col gap-1 sm:w-auto sm:flex-row">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={handleRecommendRoute}
+                                                disabled={routeLoading || !pred}
+                                                className="min-h-10 w-full px-2.5 sm:min-h-9 sm:w-auto"
+                                            >
+                                                {routeLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Route className="mr-1 h-3 w-3" />}
+                                                Recommend
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                onClick={handleRouteAndAdmit}
+                                                disabled={routeAdmitLoading || !pred}
+                                                className="min-h-10 w-full px-2.5 sm:min-h-9 sm:w-auto"
+                                            >
+                                                {routeAdmitLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Building2 className="mr-1 h-3 w-3" />}
+                                                Route and Admit
+                                            </Button>
+                                        </div>
+                                    </div>
+
+                                    {routeError ? <p className="mb-2 text-xs text-destructive" role="alert">{routeError}</p> : null}
+                                    {routeMessage ? <p className="mb-2 text-xs text-emerald-400" role="status" aria-live="polite">{routeMessage}</p> : null}
+
+                                    {routeDecision ? (
+                                        <div className="space-y-2 text-xs">
+                                            <div className="rounded-md border border-border/50 bg-muted/30 p-2">
+                                                <p className="font-semibold text-foreground">
+                                                    {routeDecision.recommended_hospital_name} • {routeDecision.recommended_ward_name}
+                                                </p>
+                                                <p className="mt-1 text-muted-foreground">
+                                                    Wait {routeDecision.estimated_wait_minutes} min ({routeDecision.estimated_wait_band}) • Overflow {routeDecision.overflow_risk}
+                                                </p>
+                                                <p className="text-muted-foreground">
+                                                    Bed: {routeDecision.recommended_bed_label || routeDecision.recommended_bed_id || "No immediate bed"}
+                                                </p>
+                                                <p className="mt-1 text-muted-foreground">{routeDecision.route_reason}</p>
+                                                {routePolicyFlags.length > 0 ? (
+                                                    <p className="mt-1 text-blue-300">Policy: {routePolicyFlags.join(", ")}</p>
+                                                ) : null}
+                                            </div>
+
+                                            {routeDecision.alternatives.length > 0 ? (
+                                                <div>
+                                                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Alternatives</p>
+                                                    <div className="space-y-1">
+                                                        {routeDecision.alternatives.slice(0, 3).map((alt, idx) => (
+                                                            <div key={`${alt.ward_id}-${idx}`} className="rounded-md bg-black/10 px-2 py-1 text-[11px] text-muted-foreground">
+                                                                {alt.hospital_name} • {alt.ward_name} • beds {alt.available_beds} • score {alt.composite_score.toFixed(3)}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    ) : (
+                                        <p className="text-xs text-muted-foreground">Generate a route to inspect reasoning and alternatives before committing admission.</p>
+                                    )}
+                                </div>
+
                                 {/* Actions */}
-                                <div className="flex gap-2">
-                                    <Button onClick={handleSave} disabled={saving} variant="outline" className="flex-1" size="sm">
+                                <div className="flex flex-col gap-2 sm:flex-row">
+                                    <Button onClick={handleSave} disabled={saving} variant="outline" className="min-h-10 flex-1 px-3 sm:min-h-9" size="sm">
                                         {saving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Save className="mr-1 h-3 w-3" />}
                                         {t("analysis.saveToDb")}
                                     </Button>
-                                    <Button variant="outline" size="sm" onClick={() => {
+                                    <Button variant="outline" size="sm" className="min-h-10 px-3 sm:min-h-9" onClick={() => {
                                         setResult(null);
+                                        setRouteDecision(null);
+                                        setRouteError(null);
+                                        setRouteMessage(null);
                                         const n = nextSerial + 1;
                                         setNextSerial(n);
                                         setPatientId(`P${String(n).padStart(3, "0")}`);
@@ -609,8 +829,8 @@ export default function AnalysisPage() {
 
                 {/* ===== Column 3: Explanation ===== */}
                 <div className="xl:col-span-4">
-                    <Card className="border-border/50 bg-card p-6">
-                        <h3 className="mb-4 text-base font-semibold">{t("analysis.whyPrediction")}</h3>
+                    <Card className="h-full border-border/60 bg-gradient-to-b from-card to-card/90 p-4 shadow-sm sm:p-6">
+                        <h3 className="font-display mb-4 text-base font-semibold">{t("analysis.whyPrediction")}</h3>
 
                         {expl ? (
                             <div className="space-y-4">
@@ -635,28 +855,46 @@ export default function AnalysisPage() {
                                 )}
 
                                 {/* Contributor Table */}
-                                <div className="rounded-lg border border-border/50">
-                                    <table className="w-full text-xs">
-                                        <thead>
-                                            <tr className="border-b border-border/50 bg-muted/30">
-                                                <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t("analysis.feature")}</th>
-                                                <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t("analysis.value")}</th>
-                                                <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t("analysis.impact")}</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                            {expl.explanation.top_contributors.map((c: any, i: number) => (
-                                                <tr key={i} className="border-b border-border/30 last:border-0">
-                                                    <td className="px-3 py-2 font-medium">{c.feature}</td>
-                                                    <td className="px-3 py-2 text-muted-foreground">{String(c.value)}</td>
-                                                    <td className={`px-3 py-2 text-right font-mono font-semibold ${c.impact >= 0 ? "text-red-400" : "text-emerald-400"}`}>
-                                                        {c.impact >= 0 ? "+" : ""}{c.impact.toFixed(4)}
-                                                    </td>
+                                <div className="space-y-2 md:hidden">
+                                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                    {expl.explanation.top_contributors.map((c: any, i: number) => (
+                                        <article key={`contrib-mobile-${i}`} className="rounded-lg border border-border/60 bg-card/70 p-3">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <p className="text-xs font-semibold">{c.feature}</p>
+                                                <p className={`font-mono text-xs font-semibold ${c.impact >= 0 ? "text-red-400" : "text-emerald-400"}`}>
+                                                    {c.impact >= 0 ? "+" : ""}{c.impact.toFixed(4)}
+                                                </p>
+                                            </div>
+                                            <p className="mt-1 text-[11px] text-muted-foreground">{t("analysis.value")}: {String(c.value)}</p>
+                                        </article>
+                                    ))}
+                                </div>
+
+                                <div className="hidden md:block">
+                                    <div className="mobile-scroll overflow-x-auto rounded-lg border border-border/50">
+                                        <table className="w-full text-xs">
+                                            <caption className="sr-only">Model contributor feature impact table</caption>
+                                            <thead>
+                                                <tr className="border-b border-border/50 bg-muted/30">
+                                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t("analysis.feature")}</th>
+                                                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t("analysis.value")}</th>
+                                                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t("analysis.impact")}</th>
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody>
+                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                                {expl.explanation.top_contributors.map((c: any, i: number) => (
+                                                    <tr key={i} className="border-b border-border/30 last:border-0">
+                                                        <td className="px-3 py-2 font-medium">{c.feature}</td>
+                                                        <td className="px-3 py-2 text-muted-foreground">{String(c.value)}</td>
+                                                        <td className={`px-3 py-2 text-right font-mono font-semibold ${c.impact >= 0 ? "text-red-400" : "text-emerald-400"}`}>
+                                                            {c.impact >= 0 ? "+" : ""}{c.impact.toFixed(4)}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
 
                                 {/* Confidence Factors */}

@@ -1,0 +1,88 @@
+{
+  "hospitals": [
+    {
+      "hospital_id": "HOSP-CENTRAL",
+      "name": "Central City Hospital",
+      "region": "Central",
+      "wards": [
+        {
+          "ward_id": "CC-ED",
+          "name": "Emergency Unit",
+          "specialty": "Emergency Department",
+          "capacity": 20,
+          "occupied": 16
+        },
+        {
+          "ward_id": "CC-CARD",
+          "name": "Cardiology Ward",
+          "specialty": "Cardiology",
+          "capacity": 14,
+          "occupied": 13
+        },
+        {
+          "ward_id": "CC-GEN",
+          "name": "General Medicine Ward",
+          "specialty": "General Medicine",
+          "capacity": 30,
+          "occupied": 17
+        }
+      ]
+    },
+    {
+      "hospital_id": "HOSP-NORTH",
+      "name": "North Valley Medical Center",
+      "region": "North",
+      "wards": [
+        {
+          "ward_id": "NV-ED",
+          "name": "Emergency Stabilization",
+          "specialty": "Emergency Department",
+          "capacity": 18,
+          "occupied": 17
+        },
+        {
+          "ward_id": "NV-NEURO",
+          "name": "Neurology Ward",
+          "specialty": "Neurology",
+          "capacity": 12,
+          "occupied": 9
+        },
+        {
+          "ward_id": "NV-GEN",
+          "name": "General Medicine Ward",
+          "specialty": "General Medicine",
+          "capacity": 24,
+          "occupied": 20
+        }
+      ]
+    },
+    {
+      "hospital_id": "HOSP-WEST",
+      "name": "Westside Care Hospital",
+      "region": "West",
+      "wards": [
+        {
+          "ward_id": "WS-ORTHO",
+          "name": "Orthopedics Ward",
+          "specialty": "Orthopedics",
+          "capacity": 16,
+          "occupied": 9
+        },
+        {
+          "ward_id": "WS-PULM",
+          "name": "Pulmonology Ward",
+          "specialty": "Pulmonology",
+          "capacity": 10,
+          "occupied": 9
+        },
+        {
+          "ward_id": "WS-GEN",
+          "name": "General Medicine Ward",
+          "specialty": "General Medicine",
+          "capacity": 22,
+          "occupied": 14
+        }
+      ]
+    }
+  ]
+}

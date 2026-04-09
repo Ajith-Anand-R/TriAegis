@@ -18,7 +18,7 @@ export function ThemeToggleButton() {
       onClick={toggleTheme}
       aria-label={nextThemeLabel}
       title={nextThemeLabel}
-      className="bg-background/95 backdrop-blur"
+      className="h-10 w-10 bg-background/95 backdrop-blur sm:h-9 sm:w-9"
     >
       {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
     </Button>

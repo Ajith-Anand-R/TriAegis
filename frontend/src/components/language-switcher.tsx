@@ -20,7 +20,7 @@ export function LanguageSwitcher({ compact = false }: LanguageSwitcherProps) {
         title={label}
         value={language}
         onChange={(event) => setLanguage(event.target.value as LanguageCode)}
-        className="flex h-9 w-full rounded-md border border-input bg-input/50 px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="flex h-10 w-full rounded-md border border-input bg-input/50 px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:h-9"
       >
         {SUPPORTED_LANGUAGES.map((lang) => (
           <option key={lang.code} value={lang.code}>

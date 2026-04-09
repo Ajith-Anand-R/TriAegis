@@ -33,6 +33,7 @@ class TriageDatabase:
                 """
                 CREATE TABLE IF NOT EXISTS patients (
                     patient_id TEXT PRIMARY KEY,
+                    patient_name TEXT,
                     age INTEGER,
                     gender TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -116,12 +117,24 @@ class TriageDatabase:
                 """
             )
 
+            self._ensure_schema_columns(conn)
+
+    @staticmethod
+    def _ensure_schema_columns(conn: sqlite3.Connection) -> None:
+        patient_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(patients)").fetchall()
+        }
+        if "patient_name" not in patient_columns:
+            conn.execute("ALTER TABLE patients ADD COLUMN patient_name TEXT")
+
     def _upsert_patient(self, conn: sqlite3.Connection, patient: Dict[str, object]) -> None:
         conn.execute(
             """
-            INSERT INTO patients (patient_id, age, gender, notes)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO patients (patient_id, patient_name, age, gender, notes)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(patient_id) DO UPDATE SET
+                patient_name = COALESCE(NULLIF(excluded.patient_name, ''), patients.patient_name),
                 age = excluded.age,
                 gender = excluded.gender,
                 notes = COALESCE(excluded.notes, patients.notes),
@@ -129,6 +142,7 @@ class TriageDatabase:
             """,
             (
                 patient["Patient_ID"],
+                str(patient.get("Patient Name", "")).strip() or None,
                 int(patient.get("Age", 0)),
                 str(patient.get("Gender", "Unknown")),
                 str(patient.get("notes", "")) or None,
@@ -209,20 +223,59 @@ class TriageDatabase:
                     rows,
                 )
 
-            conn.execute(
+            self.deduplicate_active_queue_entries(conn=conn)
+
+            existing_active_row = conn.execute(
                 """
-                INSERT INTO priority_queue (
-                    prediction_id, priority_score, department, status, queue_position, estimated_wait_time
-                ) VALUES (?, ?, ?, 'waiting', ?, ?)
+                SELECT q.queue_id, q.status
+                FROM priority_queue q
+                JOIN predictions pr ON pr.prediction_id = q.prediction_id
+                WHERE pr.patient_id = ?
+                  AND q.status IN ('waiting', 'in_progress')
+                ORDER BY
+                    CASE q.status
+                        WHEN 'in_progress' THEN 0
+                        ELSE 1
+                    END,
+                    q.queue_id DESC
+                LIMIT 1
                 """,
-                (
-                    prediction_id,
-                    float(prediction.get("priority_score", 1.0)),
-                    str(prediction.get("department", "General Medicine")),
-                    int(prediction.get("queue_position", 1)),
-                    str(prediction.get("estimated_wait_time", "60 minutes")),
-                ),
-            )
+                (str(patient["Patient_ID"]),),
+            ).fetchone()
+
+            if existing_active_row is not None:
+                conn.execute(
+                    """
+                    UPDATE priority_queue
+                    SET prediction_id = ?,
+                        priority_score = ?,
+                        department = ?,
+                        estimated_wait_time = ?
+                    WHERE queue_id = ?
+                    """,
+                    (
+                        prediction_id,
+                        float(prediction.get("priority_score", 1.0)),
+                        str(prediction.get("department", "General Medicine")),
+                        str(prediction.get("estimated_wait_time", "60 minutes")),
+                        int(existing_active_row["queue_id"]),
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO priority_queue (
+                        prediction_id, priority_score, department, status, queue_position, estimated_wait_time
+                    ) VALUES (?, ?, ?, 'waiting', ?, ?)
+                    """,
+                    (
+                        prediction_id,
+                        float(prediction.get("priority_score", 1.0)),
+                        str(prediction.get("department", "General Medicine")),
+                        int(prediction.get("queue_position", 1)),
+                        str(prediction.get("estimated_wait_time", "60 minutes")),
+                    ),
+                )
 
             conn.execute(
                 """
@@ -352,16 +405,68 @@ class TriageDatabase:
             if owns_connection:
                 context.__exit__(None, None, None)
 
+    def deduplicate_active_queue_entries(self, conn: sqlite3.Connection | None = None) -> int:
+        owns_connection = conn is None
+        if owns_connection:
+            context = self.connection()
+            conn = context.__enter__()
+
+        deleted = 0
+        try:
+            rows = conn.execute(
+                """
+                SELECT q.queue_id, pr.patient_id, q.status
+                FROM priority_queue q
+                JOIN predictions pr ON pr.prediction_id = q.prediction_id
+                WHERE q.status IN ('waiting', 'in_progress')
+                ORDER BY
+                    pr.patient_id ASC,
+                    CASE q.status
+                        WHEN 'in_progress' THEN 0
+                        ELSE 1
+                    END,
+                    q.queue_id DESC
+                """
+            ).fetchall()
+
+            seen_patients: set[str] = set()
+            duplicate_queue_ids: List[int] = []
+
+            for row in rows:
+                patient_id = str(row["patient_id"])
+                queue_id = int(row["queue_id"])
+                if patient_id in seen_patients:
+                    duplicate_queue_ids.append(queue_id)
+                    continue
+                seen_patients.add(patient_id)
+
+            if duplicate_queue_ids:
+                conn.executemany(
+                    "DELETE FROM priority_queue WHERE queue_id = ?",
+                    [(queue_id,) for queue_id in duplicate_queue_ids],
+                )
+                deleted = len(duplicate_queue_ids)
+                self.reorder_queue(conn)
+
+            return deleted
+        finally:
+            if owns_connection:
+                context.__exit__(None, None, None)
+
     def get_priority_queue(self, status: str | None = None) -> List[Dict[str, object]]:
         with self.connection() as conn:
+            self.deduplicate_active_queue_entries(conn=conn)
+
             base_query = """
                 SELECT q.queue_id, q.prediction_id, q.arrival_time, q.priority_score,
                        q.department, q.status, q.queue_position, q.estimated_wait_time,
                        pr.risk_level, pr.patient_id, pr.timestamp,
                        pr.bp_systolic, pr.bp_diastolic, pr.heart_rate, pr.temperature,
-                       pr.model_confidence
+                       pr.model_confidence,
+                       pt.patient_name
                 FROM priority_queue q
                 JOIN predictions pr ON pr.prediction_id = q.prediction_id
+                LEFT JOIN patients pt ON pt.patient_id = pr.patient_id
             """
             params: tuple = ()
             if status:
@@ -586,14 +691,16 @@ class TriageDatabase:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT prediction_id, patient_id, timestamp, symptoms, bp_systolic, bp_diastolic,
-                       heart_rate, temperature, pre_existing_conditions, risk_level,
-                       risk_probability_low, risk_probability_medium, risk_probability_high,
-                       recommended_department, department_reason, priority_score,
-                       priority_category, estimated_wait_time, model_confidence,
-                       processing_time_ms, source
-                FROM predictions
-                ORDER BY timestamp DESC
+                SELECT pr.prediction_id, pr.patient_id, pt.patient_name, pr.timestamp,
+                       pr.symptoms, pr.bp_systolic, pr.bp_diastolic,
+                       pr.heart_rate, pr.temperature, pr.pre_existing_conditions, pr.risk_level,
+                       pr.risk_probability_low, pr.risk_probability_medium, pr.risk_probability_high,
+                       pr.recommended_department, pr.department_reason, pr.priority_score,
+                       pr.priority_category, pr.estimated_wait_time, pr.model_confidence,
+                       pr.processing_time_ms, pr.source
+                FROM predictions pr
+                LEFT JOIN patients pt ON pt.patient_id = pr.patient_id
+                ORDER BY pr.timestamp DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -612,44 +719,48 @@ class TriageDatabase:
     ) -> List[Dict[str, object]]:
         query = [
             """
-            SELECT prediction_id, patient_id, timestamp, symptoms, bp_systolic, bp_diastolic,
-                   heart_rate, temperature, pre_existing_conditions, risk_level,
-                   recommended_department, priority_score, priority_category,
-                   estimated_wait_time, model_confidence, source
-            FROM predictions
+             SELECT pr.prediction_id, pr.patient_id, pt.patient_name, pr.timestamp,
+                 pr.symptoms, pr.bp_systolic, pr.bp_diastolic,
+                 pr.heart_rate, pr.temperature, pr.pre_existing_conditions, pr.risk_level,
+                 pr.recommended_department, pr.priority_score, pr.priority_category,
+                 pr.estimated_wait_time, pr.model_confidence, pr.source
+             FROM predictions pr
+             LEFT JOIN patients pt ON pt.patient_id = pr.patient_id
             WHERE 1=1
             """
         ]
         params: List[object] = []
 
         if patient_id_query:
-            query.append("AND patient_id LIKE ?")
-            params.append(f"%{patient_id_query}%")
+            query.append("AND (pr.patient_id LIKE ? OR COALESCE(pt.patient_name, '') LIKE ?)")
+            pattern = f"%{patient_id_query}%"
+            params.append(pattern)
+            params.append(pattern)
 
         if risk_levels:
             placeholders = ",".join(["?"] * len(risk_levels))
-            query.append(f"AND risk_level IN ({placeholders})")
+            query.append(f"AND pr.risk_level IN ({placeholders})")
             params.extend(risk_levels)
 
         if departments:
             placeholders = ",".join(["?"] * len(departments))
-            query.append(f"AND recommended_department IN ({placeholders})")
+            query.append(f"AND pr.recommended_department IN ({placeholders})")
             params.extend(departments)
 
         if priority_categories:
             placeholders = ",".join(["?"] * len(priority_categories))
-            query.append(f"AND priority_category IN ({placeholders})")
+            query.append(f"AND pr.priority_category IN ({placeholders})")
             params.extend(priority_categories)
 
         if start_date:
-            query.append("AND date(timestamp) >= date(?)")
+            query.append("AND date(pr.timestamp) >= date(?)")
             params.append(start_date)
 
         if end_date:
-            query.append("AND date(timestamp) <= date(?)")
+            query.append("AND date(pr.timestamp) <= date(?)")
             params.append(end_date)
 
-        query.append("ORDER BY timestamp DESC LIMIT ?")
+        query.append("ORDER BY pr.timestamp DESC LIMIT ?")
         params.append(limit)
 
         with self.connection() as conn:
@@ -716,6 +827,52 @@ class TriageDatabase:
             "deleted_prediction_rows": deleted_prediction_rows,
             "deleted_patient_rows": deleted_patient_rows,
         }
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    def clear_all_data(self) -> Dict[str, int]:
+        table_mappings = [
+            ("priority_queue", "deleted_queue_rows"),
+            ("patient_vitals_snapshots", "deleted_vitals_rows"),
+            ("outcome_feedback", "deleted_feedback_rows"),
+            ("shap_explanations", "deleted_shap_rows"),
+            ("routing_decisions", "deleted_route_rows"),
+            ("occupancy_events", "deleted_occupancy_event_rows"),
+            ("predictions", "deleted_prediction_rows"),
+            ("patients", "deleted_patient_rows"),
+        ]
+
+        deleted: Dict[str, int] = {key: 0 for _, key in table_mappings}
+        deleted["reset_bed_rows"] = 0
+
+        with self.connection() as conn:
+            for table_name, key in table_mappings:
+                if not self._table_exists(conn, table_name):
+                    continue
+                cursor = conn.execute(f"DELETE FROM {table_name}")
+                deleted[key] = int(cursor.rowcount)
+
+            if self._table_exists(conn, "beds"):
+                bed_cursor = conn.execute(
+                    """
+                    UPDATE beds
+                    SET status = 'available',
+                        current_patient_id = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE status <> 'available' OR current_patient_id IS NOT NULL
+                    """
+                )
+                deleted["reset_bed_rows"] = int(bed_cursor.rowcount)
+
+            self.reorder_queue(conn)
+
+        return deleted
 
     def delete_recent_records(self, days: int = 30, scope: str = "all") -> Dict[str, int]:
         if days <= 0:

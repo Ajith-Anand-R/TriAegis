@@ -16,13 +16,20 @@ import { LanguageCode, SUPPORTED_LANGUAGES } from "@/lib/i18n";
 export function LanguageMenuButton() {
   const { language, setLanguage, t } = useI18n();
   const current = SUPPORTED_LANGUAGES.find((lang) => lang.code === language);
+  const compactLabel = (current?.code ?? "en").toUpperCase();
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="bg-background/95 backdrop-blur">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-10 bg-background/95 px-2.5 backdrop-blur sm:h-9 sm:px-3"
+          aria-label={t("lang.label")}
+        >
           <Languages className="h-4 w-4" />
-          {t("lang.label")} • {current?.label ?? "English"}
+          <span className="hidden sm:inline">{t("lang.label")} • {current?.label ?? "English"}</span>
+          <span className="text-xs font-semibold sm:hidden">{compactLabel}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">

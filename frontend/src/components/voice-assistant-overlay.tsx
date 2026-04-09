@@ -186,18 +186,77 @@ function CountdownRing({ seconds }: { seconds: number }) {
 export function VoiceAssistantOverlay() {
   const { state, stop } = useVoiceAssistant();
   const panelRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const isVisible = state.active || state.step !== "idle";
 
   // Prevent scroll behind overlay
   useEffect(() => {
-    if (state.active) {
+    if (isVisible) {
+      document.body.style.overflow = "hidden";
+    } else {
       document.body.style.overflow = "";
     }
+
     return () => {
       document.body.style.overflow = "";
     };
-  }, [state.active]);
+  }, [isVisible]);
 
-  if (!state.active && state.step === "idle") return null;
+  useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
+
+    lastFocusedElementRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    const focusCloseButton = window.setTimeout(() => {
+      closeButtonRef.current?.focus();
+    }, 0);
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        stop();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+
+      if (!focusable || focusable.length === 0) {
+        return;
+      }
+
+      const focusableElements = Array.from(focusable);
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(focusCloseButton);
+      window.removeEventListener("keydown", onKeyDown);
+      lastFocusedElementRef.current?.focus();
+      lastFocusedElementRef.current = null;
+    };
+  }, [isVisible, stop]);
+
+  if (!isVisible) return null;
 
   const { step, subState, prompt, transcript, error, countdown, resultText } = state;
 
@@ -232,13 +291,20 @@ export function VoiceAssistantOverlay() {
       `}</style>
 
       {/* Backdrop */}
-      <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm" onClick={stop} />
+      <button
+        type="button"
+        className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm"
+        onClick={stop}
+        aria-label="Close voice assistant"
+      />
 
       {/* Panel */}
       <div
         ref={panelRef}
-        className="fixed z-[101] bottom-6 right-6 w-[380px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border/60 bg-card shadow-2xl animate-in slide-in-from-bottom-4 duration-300"
-        style={{ maxHeight: "calc(100vh - 3rem)" }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="TriAegis Voice Assistant"
+        className="fixed bottom-2 left-2 right-2 z-[101] w-auto max-h-[calc(100vh-1rem)] rounded-2xl border border-border/60 bg-card shadow-2xl animate-in slide-in-from-bottom-4 duration-300 md:bottom-6 md:left-auto md:right-6 md:w-[380px] md:max-h-[calc(100vh-3rem)] md:max-w-[calc(100vw-2rem)]"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border/40 px-5 py-3">
@@ -252,8 +318,11 @@ export function VoiceAssistantOverlay() {
             </div>
           </div>
           <button
+            ref={closeButtonRef}
+            type="button"
             onClick={stop}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-muted/50 text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+            aria-label="Stop and close voice assistant"
             title="Stop & Close"
           >
             <X className="h-4 w-4" />
@@ -261,7 +330,7 @@ export function VoiceAssistantOverlay() {
         </div>
 
         {/* Body */}
-        <div className="overflow-y-auto px-5 py-4 space-y-4" style={{ maxHeight: "440px" }}>
+        <div className="mobile-scroll max-h-[52vh] space-y-4 overflow-y-auto px-5 py-4 md:max-h-[440px]">
           {/* Step Progress */}
           <StepProgress currentStep={step} />
 
@@ -327,8 +396,9 @@ export function VoiceAssistantOverlay() {
             Powered by Web Speech API
           </p>
           <button
+            type="button"
             onClick={stop}
-            className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+            className="min-h-9 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
           >
             {step === "complete" ? "Close" : "Stop Assistant"}
           </button>

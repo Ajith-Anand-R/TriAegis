@@ -9,23 +9,38 @@ from __future__ import annotations
 import io
 import json
 import inspect
+import os
+import sys
+import threading
+import time
 import uuid
 import urllib.error
 import urllib.request
 import numpy as np
+from contextlib import asynccontextmanager
 from functools import wraps
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from auth import authenticate_user, create_access_token, get_current_user, require_role, security_configuration_status
+from auth import (
+    authenticate_user,
+    change_user_password,
+    create_user,
+    create_access_token,
+    get_current_user,
+    list_users,
+    require_role,
+    set_user_active,
+    security_configuration_status,
+)
 from utils.database import TriageDatabase
 from utils.document_parser import parse_document
 from utils.explainer import ShapExplainer
@@ -37,6 +52,8 @@ from utils.followup_planner import build_followup_plan
 from utils.privacy import redact_records
 from utils.monitoring import build_drift_report
 from utils.ml_engine import TriageMLEngine
+from utils.occupancy import OccupancyEngine
+from utils.routing_engine import RoutingEngine
 from utils.reporting import batch_results_pdf, dataframe_to_csv_bytes, single_result_pdf
 from utils.validators import sanitize_text_list, validate_patient_payload
 
@@ -48,12 +65,44 @@ ROOT = Path(__file__).resolve().parent
 _engine: TriageMLEngine | None = None
 _db: TriageDatabase | None = None
 _explainer: ShapExplainer | None = None
+_occupancy: OccupancyEngine | None = None
 _sim_state: Dict[str, object] = {
     "current_minute": 0,
     "queue": [],
     "timeline": [],
     "arrived": 0,
     "completed": 0,
+}
+
+
+CLOSED_LOOP_QUEUE_INTERVAL_SECONDS = 300
+CLOSED_LOOP_OCCUPANCY_INTERVAL_SECONDS = 60
+CLOSED_LOOP_OVERFLOW_THRESHOLD = 0.95
+CLOSED_LOOP_REBALANCE_MAX_PATIENTS = 50
+CLOSED_LOOP_REBALANCE_COOLDOWN_SECONDS = 300
+
+_closed_loop_thread: threading.Thread | None = None
+_closed_loop_stop_event: threading.Event | None = None
+_closed_loop_state_lock = threading.Lock()
+_closed_loop_state: Dict[str, object] = {
+    "enabled": True,
+    "running": False,
+    "started_at": None,
+    "stopped_at": None,
+    "last_tick_at": None,
+    "last_queue_cycle_at": None,
+    "last_occupancy_cycle_at": None,
+    "last_overflow_detected": False,
+    "last_max_ward_load_ratio": 0.0,
+    "last_rebalanced_routes": 0,
+    "last_rebalance_signature": "",
+    "last_rebalance_epoch": 0.0,
+    "last_rebalance_at": None,
+    "queue_cycles": 0,
+    "occupancy_cycles": 0,
+    "rebalance_runs": 0,
+    "queue_escalation_alerts": 0,
+    "last_error": None,
 }
 
 
@@ -78,11 +127,28 @@ def get_explainer() -> ShapExplainer:
     return _explainer
 
 
+def get_occupancy() -> OccupancyEngine:
+    global _occupancy
+    if _occupancy is None:
+        _occupancy = OccupancyEngine(
+            db_path=ROOT / "database" / "patients.db",
+            seed_path=ROOT / "data" / "occupancy_seed.json",
+        )
+    return _occupancy
+
+
+def _ensure_occupancy_seeded(engine: OccupancyEngine) -> None:
+    if engine.get_hospital_occupancy():
+        return
+    engine.seed_from_file(reset=False)
+
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 class PatientPayload(BaseModel):
     Patient_ID: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    Patient_Name: Optional[str] = Field(default=None, alias="Patient Name")
     Age: int = 40
     Gender: str = "Male"
     Symptoms: str = ""
@@ -96,6 +162,7 @@ class PatientPayload(BaseModel):
     def to_engine_dict(self) -> Dict[str, object]:
         return {
             "Patient_ID": self.Patient_ID,
+            "Patient Name": self.Patient_Name or "",
             "Age": self.Age,
             "Gender": self.Gender,
             "Symptoms": self.Symptoms,
@@ -123,6 +190,30 @@ class HistoryQuery(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RegisterUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "Nurse"
+
+
+class AdminRegisterUserRequest(BaseModel):
+    admin_username: str
+    admin_password: str
+    username: str
+    password: str
+    role: str = "Doctor"
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UpdateUserStatusRequest(BaseModel):
+    username: str
+    is_active: bool
 
 
 class SimulationStepRequest(BaseModel):
@@ -194,34 +285,141 @@ class ExportRecordsRequest(BaseModel):
     records: List[dict]
 
 
+class OccupancySeedRequest(BaseModel):
+    reset: bool = False
+
+
+class AdmitRequest(BaseModel):
+    ward_id: str
+    patient_id: str
+    route_id: Optional[str] = None
+
+
+class DischargeRequest(BaseModel):
+    bed_id: str
+    patient_id: Optional[str] = None
+
+
+class RouteRequest(BaseModel):
+    patient_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    risk_level: str
+    priority_score: float = Field(5.0, ge=1.0, le=10.0)
+    department: str
+    preferred_hospital_id: Optional[str] = None
+    queue_ahead: int = Field(0, ge=0, le=100)
+
+
+class RouteAdmitRequest(RouteRequest):
+    pass
+
+
+class RouteDistributionPatient(BaseModel):
+    patient_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    risk_level: str
+    priority_score: float = Field(5.0, ge=1.0, le=10.0)
+    department: str
+    preferred_hospital_id: Optional[str] = None
+    queue_position: int = Field(0, ge=0, le=1000)
+    queue_ahead: Optional[int] = Field(default=None, ge=0, le=1000)
+
+
+class RouteDistributeRequest(BaseModel):
+    patients: List[RouteDistributionPatient]
+    persist_routes: bool = True
+
+
+class LoopRunRequest(BaseModel):
+    queue_monitoring: bool = True
+    overflow_rebalance: bool = True
+    enforce_cooldown: bool = False
+
+
+class LoopControlRequest(BaseModel):
+    action: Literal["pause", "resume", "restart"]
+
+
 # ---------------------------------------------------------------------------
 # Constants used by the frontend
 # ---------------------------------------------------------------------------
 SYMPTOM_OPTIONS = [
-    "chest pain", "severe shortness of breath", "confusion",
-    "severe bleeding", "loss of consciousness", "stroke symptoms",
-    "severe abdominal pain", "difficulty breathing",
-    "severe allergic reaction", "uncontrolled bleeding", "seizure",
-    "severe trauma", "moderate shortness of breath", "high fever",
-    "persistent vomiting", "severe headache", "palpitations",
-    "moderate bleeding", "severe pain", "dizziness", "fainting",
-    "dehydration", "abdominal pain", "irregular heartbeat",
-    "mild headache", "cough", "cold", "minor pain", "fatigue",
-    "nausea", "mild fever", "sore throat", "runny nose", "muscle ache",
-    "rash", "minor injury", "constipation", "mild dizziness",
-    "back pain", "joint pain", "insomnia", "anxiety", "minor cut", "sprain",
+    "chest pain",
+    "severe shortness of breath",
+    "confusion",
+    "severe bleeding",
+    "loss of consciousness",
+    "stroke symptoms",
+    "severe abdominal pain",
+    "difficulty breathing",
+    "severe allergic reaction",
+    "uncontrolled bleeding",
+    "seizure",
+    "severe trauma",
+    "moderate shortness of breath",
+    "high fever",
+    "persistent vomiting",
+    "severe headache",
+    "palpitations",
+    "moderate bleeding",
+    "severe pain",
+    "dizziness",
+    "fainting",
+    "dehydration",
+    "abdominal pain",
+    "irregular heartbeat",
+    "mild headache",
+    "cough",
+    "cold",
+    "minor pain",
+    "fatigue",
+    "nausea",
+    "mild fever",
+    "sore throat",
+    "runny nose",
+    "muscle ache",
+    "rash",
+    "minor injury",
+    "constipation",
+    "mild dizziness",
+    "back pain",
+    "joint pain",
+    "insomnia",
+    "anxiety",
+    "minor cut",
+    "sprain",
 ]
 
 CONDITION_OPTIONS = [
-    "diabetes", "hypertension", "asthma", "heart disease", "COPD",
-    "kidney disease", "obesity", "cancer", "stroke history", "arthritis",
-    "high cholesterol", "thyroid disorder", "anxiety", "depression",
+    "diabetes",
+    "hypertension",
+    "asthma",
+    "heart disease",
+    "COPD",
+    "kidney disease",
+    "obesity",
+    "cancer",
+    "stroke history",
+    "arthritis",
+    "high cholesterol",
+    "thyroid disorder",
+    "anxiety",
+    "depression",
 ]
 
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="TriAegis API", version="1.0.0")
+
+
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    _start_closed_loop_worker()
+    try:
+        yield
+    finally:
+        _stop_closed_loop_worker()
+
+
+app = FastAPI(title="TriAegis API", version="1.0.0", lifespan=_app_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -234,11 +432,14 @@ app.add_middleware(
 
 
 def _error_response(status_code: int, error: str, detail: object) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": error, "detail": detail})
+    return JSONResponse(
+        status_code=status_code, content={"error": error, "detail": detail}
+    )
 
 
 def safe_endpoint(func):
     if inspect.iscoroutinefunction(func):
+
         @wraps(func)
         async def _async_wrapper(*args, **kwargs):
             try:
@@ -247,6 +448,7 @@ def safe_endpoint(func):
                 return _error_response(exc.status_code, "RequestError", exc.detail)
             except Exception as exc:
                 return _error_response(500, "InternalServerError", str(exc))
+
         return _async_wrapper
 
     @wraps(func)
@@ -257,13 +459,16 @@ def safe_endpoint(func):
             return _error_response(exc.status_code, "RequestError", exc.detail)
         except Exception as exc:
             return _error_response(500, "InternalServerError", str(exc))
+
     return _sync_wrapper
 
 
 def sanitize_predict_payload(payload: Dict[str, object]) -> Dict[str, object]:
     clean_payload = dict(payload)
     clean_payload["Symptoms"] = sanitize_text_list(str(payload.get("Symptoms", "")))
-    clean_payload["Pre-Existing Conditions"] = sanitize_text_list(str(payload.get("Pre-Existing Conditions", "none")))
+    clean_payload["Pre-Existing Conditions"] = sanitize_text_list(
+        str(payload.get("Pre-Existing Conditions", "none"))
+    )
     return clean_payload
 
 
@@ -322,6 +527,297 @@ def _sort_sim_queue(queue_rows: List[Dict[str, object]]) -> List[Dict[str, objec
     return sorted_rows
 
 
+def _latest_history_per_patient(records: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    # search_predictions already returns rows ordered by timestamp desc,
+    # so the first occurrence per patient is the latest one.
+    latest: List[Dict[str, object]] = []
+    seen_patient_ids: set[str] = set()
+
+    for row in records:
+        patient_id = str(row.get("patient_id", "")).strip()
+        if not patient_id:
+            latest.append(row)
+            continue
+        if patient_id in seen_patient_ids:
+            continue
+
+        seen_patient_ids.add(patient_id)
+        latest.append(row)
+
+    return latest
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _set_closed_loop_state(updates: Dict[str, object]) -> None:
+    with _closed_loop_state_lock:
+        _closed_loop_state.update(updates)
+
+
+def _get_closed_loop_state_snapshot() -> Dict[str, object]:
+    with _closed_loop_state_lock:
+        return dict(_closed_loop_state)
+
+
+def _is_closed_loop_enabled() -> bool:
+    if str(os.getenv("TRIAEGIS_DISABLE_CLOSED_LOOP", "0")).strip() == "1":
+        return False
+
+    # Tests should remain deterministic and isolated from background mutation.
+    if "pytest" in sys.modules:
+        return False
+
+    return True
+
+
+def _build_distribution_payload_from_waiting(
+    waiting_rows: List[Dict[str, object]],
+    limit: int,
+) -> List[Dict[str, object]]:
+    payloads: List[Dict[str, object]] = []
+    for index, row in enumerate(waiting_rows[: max(1, int(limit))], start=1):
+        queue_position = max(1, int(row.get("queue_position", index) or index))
+        payloads.append(
+            {
+                "patient_id": str(row.get("patient_id") or f"auto-{row.get('prediction_id', index)}"),
+                "risk_level": str(row.get("risk_level", "Low")),
+                "priority_score": float(row.get("priority_score", 1.0) or 1.0),
+                "department": str(row.get("department", "General Medicine")),
+                "queue_position": queue_position,
+                "queue_ahead": max(0, queue_position - 1),
+            }
+        )
+    return payloads
+
+
+def _run_queue_monitoring_cycle() -> Dict[str, object]:
+    db = get_db()
+    events = db.apply_continuous_monitoring(check_interval_minutes=5)
+    waiting_rows = db.get_priority_queue(status="waiting")
+    return {
+        "ran_at": _utc_now_iso(),
+        "escalated_count": len(events),
+        "waiting_count": len(waiting_rows),
+        "events": events,
+    }
+
+
+def _run_overflow_rebalance_cycle(
+    *,
+    enforce_cooldown: bool = True,
+    max_patients: int = CLOSED_LOOP_REBALANCE_MAX_PATIENTS,
+) -> Dict[str, object]:
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+
+    load_state = occupancy.current_load()
+    wards = load_state.get("wards", []) if isinstance(load_state, dict) else []
+    summary = load_state.get("summary", {}) if isinstance(load_state, dict) else {}
+
+    max_load_ratio = max(
+        (float(ward.get("load_ratio", 0.0) or 0.0) for ward in wards),
+        default=0.0,
+    )
+    overflow_detected = max_load_ratio >= CLOSED_LOOP_OVERFLOW_THRESHOLD
+
+    result: Dict[str, object] = {
+        "ran_at": _utc_now_iso(),
+        "overflow_detected": overflow_detected,
+        "max_ward_load_ratio": round(max_load_ratio, 4),
+        "critical_ward_count": int(summary.get("critical_ward_count", 0) or 0),
+        "warning_ward_count": int(summary.get("warning_ward_count", 0) or 0),
+        "waiting_considered": 0,
+        "persisted_routes": 0,
+        "skipped_reason": None,
+        "distribution": None,
+    }
+
+    if not overflow_detected:
+        return result
+
+    db = get_db()
+    waiting_rows = db.get_priority_queue(status="waiting")
+    payloads = _build_distribution_payload_from_waiting(waiting_rows, limit=max_patients)
+    result["waiting_considered"] = len(payloads)
+
+    if not payloads:
+        result["skipped_reason"] = "no_waiting_patients"
+        return result
+
+    signature = "|".join(
+        f"{str(item['patient_id']).strip()}:{int(item['queue_position'])}"
+        for item in payloads
+    )
+    now_epoch = time.time()
+
+    if enforce_cooldown:
+        state = _get_closed_loop_state_snapshot()
+        last_signature = str(state.get("last_rebalance_signature", ""))
+        last_epoch = float(state.get("last_rebalance_epoch", 0.0) or 0.0)
+        if (
+            signature == last_signature
+            and (now_epoch - last_epoch) < CLOSED_LOOP_REBALANCE_COOLDOWN_SECONDS
+        ):
+            result["skipped_reason"] = "cooldown"
+            return result
+
+    routing_engine = RoutingEngine(occupancy)
+    distribution = routing_engine.distribute_patient_inflow(payloads)
+    assignments = distribution.get("assignments", [])
+
+    persisted_routes = 0
+    for assignment in assignments:
+        if not isinstance(assignment, dict):
+            continue
+
+        queue_ahead = max(0, int(assignment.get("queue_ahead", 0) or 0))
+        route_id = occupancy.record_route_decision(
+            routing=assignment,
+            queue_ahead=queue_ahead,
+            source="closed_loop_rebalance",
+            metadata={
+                "loop_reason": "overflow_threshold",
+                "max_ward_load_ratio": round(max_load_ratio, 4),
+                "distribution_batch_size": len(payloads),
+                "inflow_rank": assignment.get("inflow_rank"),
+            },
+        )
+        assignment["route_id"] = route_id
+        persisted_routes += 1
+
+    result["persisted_routes"] = persisted_routes
+    result["distribution"] = {
+        "total_incoming_requests": int(distribution.get("total_incoming_requests", len(payloads))),
+        "served_with_capacity": int(distribution.get("served_with_capacity", 0)),
+        "overflow_recommended": int(distribution.get("overflow_recommended", 0)),
+    }
+
+    _set_closed_loop_state(
+        {
+            "last_rebalance_signature": signature,
+            "last_rebalance_epoch": now_epoch,
+            "last_rebalance_at": _utc_now_iso(),
+            "rebalance_runs": int(_get_closed_loop_state_snapshot().get("rebalance_runs", 0) or 0)
+            + 1,
+        }
+    )
+
+    return result
+
+
+def _closed_loop_worker(stop_event: threading.Event) -> None:
+    next_queue_cycle = time.time()
+    next_occupancy_cycle = time.time()
+
+    _set_closed_loop_state(
+        {
+            "running": True,
+            "enabled": True,
+            "started_at": _utc_now_iso(),
+            "stopped_at": None,
+            "last_error": None,
+        }
+    )
+
+    while not stop_event.wait(1.0):
+        now_epoch = time.time()
+        _set_closed_loop_state({"last_tick_at": _utc_now_iso()})
+
+        if now_epoch >= next_queue_cycle:
+            try:
+                queue_result = _run_queue_monitoring_cycle()
+                state = _get_closed_loop_state_snapshot()
+                _set_closed_loop_state(
+                    {
+                        "last_queue_cycle_at": str(queue_result.get("ran_at") or _utc_now_iso()),
+                        "queue_cycles": int(state.get("queue_cycles", 0) or 0) + 1,
+                        "queue_escalation_alerts": int(queue_result.get("escalated_count", 0) or 0),
+                        "last_error": None,
+                    }
+                )
+            except Exception as exc:
+                _set_closed_loop_state(
+                    {
+                        "last_error": f"queue_cycle: {exc}",
+                        "last_queue_cycle_at": _utc_now_iso(),
+                    }
+                )
+            next_queue_cycle = now_epoch + CLOSED_LOOP_QUEUE_INTERVAL_SECONDS
+
+        if now_epoch >= next_occupancy_cycle:
+            try:
+                rebalance_result = _run_overflow_rebalance_cycle(enforce_cooldown=True)
+                state = _get_closed_loop_state_snapshot()
+                _set_closed_loop_state(
+                    {
+                        "last_occupancy_cycle_at": str(
+                            rebalance_result.get("ran_at") or _utc_now_iso()
+                        ),
+                        "occupancy_cycles": int(state.get("occupancy_cycles", 0) or 0) + 1,
+                        "last_overflow_detected": bool(
+                            rebalance_result.get("overflow_detected", False)
+                        ),
+                        "last_max_ward_load_ratio": float(
+                            rebalance_result.get("max_ward_load_ratio", 0.0) or 0.0
+                        ),
+                        "last_rebalanced_routes": int(
+                            rebalance_result.get("persisted_routes", 0) or 0
+                        ),
+                        "last_error": None,
+                    }
+                )
+            except Exception as exc:
+                _set_closed_loop_state(
+                    {
+                        "last_error": f"occupancy_cycle: {exc}",
+                        "last_occupancy_cycle_at": _utc_now_iso(),
+                    }
+                )
+            next_occupancy_cycle = now_epoch + CLOSED_LOOP_OCCUPANCY_INTERVAL_SECONDS
+
+    _set_closed_loop_state({"running": False, "stopped_at": _utc_now_iso()})
+
+
+def _start_closed_loop_worker() -> None:
+    global _closed_loop_thread, _closed_loop_stop_event
+
+    if not _is_closed_loop_enabled():
+        _set_closed_loop_state({"enabled": False, "running": False})
+        return
+
+    if _closed_loop_thread is not None and _closed_loop_thread.is_alive():
+        return
+
+    stop_event = threading.Event()
+    worker = threading.Thread(
+        target=_closed_loop_worker,
+        args=(stop_event,),
+        name="triaegis-closed-loop",
+        daemon=True,
+    )
+
+    _closed_loop_stop_event = stop_event
+    _closed_loop_thread = worker
+    _set_closed_loop_state({"enabled": True, "running": False, "last_error": None})
+    worker.start()
+
+
+def _stop_closed_loop_worker() -> None:
+    global _closed_loop_thread, _closed_loop_stop_event
+
+    if _closed_loop_stop_event is not None:
+        _closed_loop_stop_event.set()
+
+    if _closed_loop_thread is not None and _closed_loop_thread.is_alive():
+        _closed_loop_thread.join(timeout=5)
+
+    _closed_loop_thread = None
+    _closed_loop_stop_event = None
+    _set_closed_loop_state({"running": False, "stopped_at": _utc_now_iso()})
+
+
 def _build_clinical_explanation(
     patient_payload: Dict[str, object],
     prediction: Dict[str, object],
@@ -330,19 +826,33 @@ def _build_clinical_explanation(
     probabilities = prediction.get("probabilities", {})
     confidence = float(prediction.get("confidence", 0.0))
     sorted_probs = sorted(
-        [float(probabilities.get("Low", 0.0)), float(probabilities.get("Medium", 0.0)), float(probabilities.get("High", 0.0))],
+        [
+            float(probabilities.get("Low", 0.0)),
+            float(probabilities.get("Medium", 0.0)),
+            float(probabilities.get("High", 0.0)),
+        ],
         reverse=True,
     )
-    probability_gap = sorted_probs[0] - sorted_probs[1] if len(sorted_probs) >= 2 else sorted_probs[0]
+    probability_gap = (
+        sorted_probs[0] - sorted_probs[1] if len(sorted_probs) >= 2 else sorted_probs[0]
+    )
 
     out_of_distribution = bool(prediction.get("out_of_distribution", False))
-    manual_review_recommended = out_of_distribution or confidence < 0.60 or probability_gap < 0.15
-    confidence_band = "High" if confidence >= 0.85 else "Moderate" if confidence >= 0.60 else "Low"
+    manual_review_recommended = (
+        out_of_distribution or confidence < 0.60 or probability_gap < 0.15
+    )
+    confidence_band = (
+        "High" if confidence >= 0.85 else "Moderate" if confidence >= 0.60 else "Low"
+    )
 
     age = int(patient_payload.get("Age", 0))
     heart_rate = int(patient_payload.get("Heart Rate", 70))
     temperature = float(patient_payload.get("Temperature", 98.6))
-    symptoms = [item.strip() for item in str(patient_payload.get("Symptoms", "")).split(",") if item.strip()]
+    symptoms = [
+        item.strip()
+        for item in str(patient_payload.get("Symptoms", "")).split(",")
+        if item.strip()
+    ]
     bp_raw = str(patient_payload.get("Blood Pressure", "120/80"))
     bp_s, bp_d = 120, 80
     if "/" in bp_raw:
@@ -365,24 +875,30 @@ def _build_clinical_explanation(
     vitals_note = (
         f"Heart rate {heart_rate} bpm, BP {bp_s}/{bp_d} mmHg, Temp {temperature}°F"
     )
-    symptom_note = ", ".join(symptoms[:3]) if symptoms else "no severe symptom cluster documented"
+    symptom_note = (
+        ", ".join(symptoms[:3]) if symptoms else "no severe symptom cluster documented"
+    )
 
     summary = (
         f"{prediction.get('risk_level', 'Unknown')} risk triage recommendation. "
         f"Primary signals: {symptom_note}. Vitals review: {vitals_note}."
     )
 
-    explanation_text = "\n".join([
-        summary,
-        "Top clinical contributors:",
-        *factor_lines,
-    ])
+    explanation_text = "\n".join(
+        [
+            summary,
+            "Top clinical contributors:",
+            *factor_lines,
+        ]
+    )
 
     if manual_review_recommended:
         if out_of_distribution:
             explanation_text += "\n⚠️ Presentation appears outside learned distribution; immediate clinician verification is required."
         else:
-            explanation_text += "\n⚠️ Confidence is borderline; manual clinical review is recommended."
+            explanation_text += (
+                "\n⚠️ Confidence is borderline; manual clinical review is recommended."
+            )
 
     return {
         "clinical_explanation": explanation_text,
@@ -421,7 +937,10 @@ def _fallback_followup_questions(complaint: str, max_questions: int) -> List[str
 
 
 def _query_ollama_symptom_dialogue(body: SymptomDialogueRequest) -> Dict[str, object]:
-    transcript_block = "\n".join([f"{turn.role}: {turn.content}" for turn in body.transcript]) or "none"
+    transcript_block = (
+        "\n".join([f"{turn.role}: {turn.content}" for turn in body.transcript])
+        or "none"
+    )
     known_patient = json.dumps(body.known_patient, ensure_ascii=True)
 
     prompt = (
@@ -439,7 +958,10 @@ def _query_ollama_symptom_dialogue(body: SymptomDialogueRequest) -> Dict[str, ob
         "stream": False,
         "format": "json",
         "messages": [
-            {"role": "system", "content": "You are concise, clinically safe, and JSON-only."},
+            {
+                "role": "system",
+                "content": "You are concise, clinically safe, and JSON-only.",
+            },
             {"role": "user", "content": prompt},
         ],
     }
@@ -463,7 +985,9 @@ def _query_ollama_symptom_dialogue(body: SymptomDialogueRequest) -> Dict[str, ob
     return {
         "source": "ollama",
         "model": body.model,
-        "follow_up_questions": [str(item) for item in questions][: body.max_followup_questions],
+        "follow_up_questions": [str(item) for item in questions][
+            : body.max_followup_questions
+        ],
         "structured": {
             "extracted": parsed.get("extracted", {}),
             "red_flags": parsed.get("red_flags", []),
@@ -472,7 +996,9 @@ def _query_ollama_symptom_dialogue(body: SymptomDialogueRequest) -> Dict[str, ob
     }
 
 
-def _predict_wait_minutes(queue_rows: List[Dict[str, object]], target_row: Dict[str, object]) -> int:
+def _predict_wait_minutes(
+    queue_rows: List[Dict[str, object]], target_row: Dict[str, object]
+) -> int:
     department_staff = {
         "Emergency Department": 3,
         "Cardiology": 2,
@@ -512,8 +1038,12 @@ def _monitoring_note(queue_row: Dict[str, object]) -> Dict[str, object]:
     arrival_raw = str(queue_row.get("arrival_time", ""))
     elapsed_minutes = 0
     try:
-        arrival = datetime.fromisoformat(arrival_raw.replace(" ", "T")).replace(tzinfo=UTC)
-        elapsed_minutes = max(0, int((datetime.now(UTC) - arrival).total_seconds() // 60))
+        arrival = datetime.fromisoformat(arrival_raw.replace(" ", "T")).replace(
+            tzinfo=UTC
+        )
+        elapsed_minutes = max(
+            0, int((datetime.now(UTC) - arrival).total_seconds() // 60)
+        )
     except ValueError:
         pass
 
@@ -549,7 +1079,9 @@ def _monitoring_note(queue_row: Dict[str, object]) -> Dict[str, object]:
 def _build_fairness_artifacts(sample_size: int) -> Dict[str, object]:
     dataset_path = ROOT / "data" / "synthetic_patients.csv"
     if not dataset_path.exists():
-        raise HTTPException(status_code=404, detail="Dataset not found for fairness analysis")
+        raise HTTPException(
+            status_code=404, detail="Dataset not found for fairness analysis"
+        )
 
     frame = pd.read_csv(dataset_path).head(sample_size).copy()
     required_cols = {
@@ -565,7 +1097,10 @@ def _build_fairness_artifacts(sample_size: int) -> Dict[str, object]:
     }
     if not required_cols.issubset(set(frame.columns)):
         missing = sorted(required_cols.difference(frame.columns))
-        raise HTTPException(status_code=422, detail=f"Dataset missing required fairness columns: {', '.join(missing)}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Dataset missing required fairness columns: {', '.join(missing)}",
+        )
 
     engine = get_engine()
     predictions = engine.predict_batch(frame.to_dict(orient="records"))
@@ -595,7 +1130,9 @@ def _build_fairness_artifacts(sample_size: int) -> Dict[str, object]:
     return {
         "sample_size": int(len(frame)),
         "metrics": {
-            "demographic_parity_gender": round(_parity_diff(gender_dp, "positive_rate"), 6),
+            "demographic_parity_gender": round(
+                _parity_diff(gender_dp, "positive_rate"), 6
+            ),
             "demographic_parity_age": round(_parity_diff(age_dp, "positive_rate"), 6),
             "equal_opportunity_gender": round(_parity_diff(gender_eo, "tpr"), 6),
             "equal_opportunity_age": round(_parity_diff(age_eo, "tpr"), 6),
@@ -628,6 +1165,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/constants")
 @safe_endpoint
 def constants():
@@ -653,6 +1191,107 @@ def auth_me(current_user: Dict[str, str] = Depends(get_current_user)):
     return current_user
 
 
+@app.get("/api/auth/users")
+@safe_endpoint
+def auth_users(current_user: Dict[str, str] = Depends(require_role("Admin"))):
+    return {
+        "users": list_users(),
+    }
+
+
+@app.post("/api/auth/register")
+@safe_endpoint
+def auth_register(
+    body: RegisterUserRequest,
+    current_user: Dict[str, str] = Depends(require_role("Admin")),
+):
+    try:
+        created = create_user(
+            username=body.username,
+            password=body.password,
+            role=body.role,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "already exists" in message.lower() else 422
+        raise HTTPException(status_code=status_code, detail=message)
+
+    return {
+        "created": created,
+    }
+
+
+@app.post("/api/auth/register-by-admin")
+@safe_endpoint
+def auth_register_by_admin(body: AdminRegisterUserRequest):
+    admin_user = authenticate_user(body.admin_username, body.admin_password)
+    if not admin_user:
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+    if str(admin_user.get("role")) != "Admin":
+        raise HTTPException(status_code=403, detail="Admin role is required")
+
+    try:
+        created = create_user(
+            username=body.username,
+            password=body.password,
+            role=body.role,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "already exists" in message.lower() else 422
+        raise HTTPException(status_code=status_code, detail=message)
+
+    return {
+        "created": created,
+    }
+
+
+@app.post("/api/auth/change-password")
+@safe_endpoint
+def auth_change_password(
+    body: ChangePasswordRequest,
+    current_user: Dict[str, str] = Depends(get_current_user),
+):
+    try:
+        change_user_password(
+            username=str(current_user.get("username", "")),
+            current_password=body.current_password,
+            new_password=body.new_password,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 401 if "incorrect" in message.lower() else 422
+        raise HTTPException(status_code=status_code, detail=message)
+
+    return {
+        "message": "Password updated successfully",
+    }
+
+
+@app.patch("/api/auth/users/status")
+@safe_endpoint
+def auth_update_user_status(
+    body: UpdateUserStatusRequest,
+    current_user: Dict[str, str] = Depends(require_role("Admin")),
+):
+    actor_username = str(current_user.get("username", "")).strip().lower() or None
+
+    try:
+        updated = set_user_active(
+            username=body.username,
+            is_active=body.is_active,
+            actor_username=actor_username,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 422
+        raise HTTPException(status_code=status_code, detail=message)
+
+    return {
+        "updated": updated,
+    }
+
+
 @app.get("/api/fairness")
 @safe_endpoint
 def fairness_analysis(
@@ -669,9 +1308,13 @@ def fairness_analysis(
             "age_band": artifacts["dist_age"].to_dict(orient="records"),
         },
         "tables": {
-            "demographic_parity_gender": artifacts["gender_dp"].to_dict(orient="records"),
+            "demographic_parity_gender": artifacts["gender_dp"].to_dict(
+                orient="records"
+            ),
             "demographic_parity_age": artifacts["age_dp"].to_dict(orient="records"),
-            "equal_opportunity_gender": artifacts["gender_eo"].to_dict(orient="records"),
+            "equal_opportunity_gender": artifacts["gender_eo"].to_dict(
+                orient="records"
+            ),
             "equal_opportunity_age": artifacts["age_eo"].to_dict(orient="records"),
         },
     }
@@ -707,13 +1350,17 @@ def fairness_export_csv(
 
 @app.get("/api/simulation/state")
 @safe_endpoint
-def simulation_state(current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin"))):
+def simulation_state(
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
     return _sim_state
 
 
 @app.post("/api/simulation/reset")
 @safe_endpoint
-def simulation_reset(current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin"))):
+def simulation_reset(
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
     global _sim_state
     _sim_state = {
         "current_minute": 0,
@@ -745,7 +1392,9 @@ def simulation_export_csv(
     return Response(
         content=csv_bytes,
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=simulation_{report_type}.csv"},
+        headers={
+            "Content-Disposition": f"attachment; filename=simulation_{report_type}.csv"
+        },
     )
 
 
@@ -789,7 +1438,11 @@ def simulation_step(
         arrivals_count = int(rng.poisson(body.lambda_rate))
 
         if arrivals_count > 0:
-            sampled = pool_df.sample(n=arrivals_count, replace=True, random_state=int(rng.integers(0, 10_000_000)))
+            sampled = pool_df.sample(
+                n=arrivals_count,
+                replace=True,
+                random_state=int(rng.integers(0, 10_000_000)),
+            )
             for _, row in sampled.iterrows():
                 payload = row.to_dict()
                 payload["Patient_ID"] = f"SIM-{current_minute}-{arrived + 1}"
@@ -823,7 +1476,9 @@ def simulation_step(
 
         queue_rows = _sort_sim_queue(queue_rows)
         if queue_rows:
-            load_snapshot = pd.DataFrame(queue_rows)["department"].value_counts().to_dict()
+            load_snapshot = (
+                pd.DataFrame(queue_rows)["department"].value_counts().to_dict()
+            )
         else:
             load_snapshot = {}
 
@@ -844,6 +1499,280 @@ def simulation_step(
         "completed": completed,
     }
     return _sim_state
+
+
+@app.post("/api/occupancy/seed")
+@safe_endpoint
+def occupancy_seed(
+    body: OccupancySeedRequest,
+    current_user: Dict[str, str] = Depends(require_role("Admin")),
+):
+    occupancy = get_occupancy()
+    seed_summary = occupancy.seed_from_file(reset=bool(body.reset))
+    load_snapshot = occupancy.current_load()
+    return {
+        "seeded": seed_summary,
+        "load": load_snapshot,
+    }
+
+
+@app.get("/api/hospitals")
+@safe_endpoint
+def hospitals(
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+    load_snapshot = occupancy.current_load()
+    return {
+        "summary": load_snapshot["summary"],
+        "hospitals": load_snapshot["hospitals"],
+    }
+
+
+@app.get("/api/wards")
+@safe_endpoint
+def wards(
+    hospital_id: Optional[str] = Query(default=None),
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+
+    ward_rows = occupancy.get_ward_occupancy(hospital_id=hospital_id)
+    return {
+        "count": len(ward_rows),
+        "wards": ward_rows,
+    }
+
+
+@app.post("/api/admit")
+@safe_endpoint
+def admit(
+    body: AdmitRequest,
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+
+    try:
+        reservation = occupancy.reserve_bed(
+            ward_id=body.ward_id,
+            patient_id=body.patient_id,
+            route_id=body.route_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    route_tracking = occupancy.mark_route_admitted(
+        patient_id=body.patient_id,
+        bed_id=str(reservation["bed_id"]),
+        route_id=body.route_id,
+    )
+
+    wait_estimate = occupancy.estimate_wait_time(ward_id=body.ward_id, queue_ahead=0)
+    return {
+        "admission": reservation,
+        "wait_estimate": wait_estimate,
+        "route_tracking": route_tracking,
+        "routing_metrics": occupancy.get_routing_operational_metrics(hours=24),
+        "summary": occupancy.current_load()["summary"],
+    }
+
+
+@app.post("/api/discharge")
+@safe_endpoint
+def discharge(
+    body: DischargeRequest,
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+
+    try:
+        release = occupancy.release_bed(bed_id=body.bed_id, patient_id=body.patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    routed_patient_id = str(release.get("patient_id") or body.patient_id or "").strip()
+    route_tracking = None
+    if routed_patient_id:
+        route_tracking = occupancy.mark_route_discharged(
+            patient_id=routed_patient_id,
+            bed_id=body.bed_id,
+        )
+
+    return {
+        "discharge": release,
+        "route_tracking": route_tracking,
+        "routing_metrics": occupancy.get_routing_operational_metrics(hours=24),
+        "summary": occupancy.current_load()["summary"],
+    }
+
+
+@app.post("/api/route")
+@safe_endpoint
+def route_patient(
+    body: RouteRequest,
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+
+    routing_engine = RoutingEngine(occupancy)
+    try:
+        routing = routing_engine.route_patient(
+            patient_id=body.patient_id,
+            risk_level=body.risk_level,
+            priority_score=body.priority_score,
+            department=body.department,
+            preferred_hospital_id=body.preferred_hospital_id,
+            queue_ahead=body.queue_ahead,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    route_id = occupancy.record_route_decision(
+        routing=routing,
+        queue_ahead=body.queue_ahead,
+        source="api_route",
+    )
+    routing["route_id"] = route_id
+
+    return {
+        "routing": routing,
+        "routing_metrics": occupancy.get_routing_operational_metrics(hours=24),
+        "summary": occupancy.current_load()["summary"],
+    }
+
+
+@app.post("/api/route/admit")
+@safe_endpoint
+def route_and_admit_patient(
+    body: RouteAdmitRequest,
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+
+    routing_engine = RoutingEngine(occupancy)
+    try:
+        routing = routing_engine.route_patient(
+            patient_id=body.patient_id,
+            risk_level=body.risk_level,
+            priority_score=body.priority_score,
+            department=body.department,
+            preferred_hospital_id=body.preferred_hospital_id,
+            queue_ahead=body.queue_ahead,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    route_id = occupancy.record_route_decision(
+        routing=routing,
+        queue_ahead=body.queue_ahead,
+        source="api_route_admit",
+    )
+    routing["route_id"] = route_id
+
+    admission = None
+    admit_error = None
+    route_tracking = None
+
+    if bool(routing.get("has_capacity")):
+        try:
+            admission = occupancy.reserve_bed(
+                ward_id=str(routing.get("recommended_ward_id") or ""),
+                patient_id=body.patient_id,
+                route_id=route_id,
+            )
+            route_tracking = occupancy.mark_route_admitted(
+                patient_id=body.patient_id,
+                bed_id=str(admission.get("bed_id") or ""),
+                route_id=route_id,
+            )
+        except ValueError as exc:
+            admit_error = str(exc)
+    else:
+        admit_error = (
+            "No immediate bed capacity is available for this route recommendation"
+        )
+
+    return {
+        "routing": routing,
+        "admitted": admission is not None,
+        "admission": admission,
+        "admit_error": admit_error,
+        "route_tracking": route_tracking,
+        "routing_metrics": occupancy.get_routing_operational_metrics(hours=24),
+        "summary": occupancy.current_load()["summary"],
+    }
+
+
+@app.post("/api/route/distribute")
+@safe_endpoint
+def distribute_patient_inflow(
+    body: RouteDistributeRequest,
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    if not body.patients:
+        raise HTTPException(status_code=422, detail="patients list cannot be empty")
+    if len(body.patients) > 200:
+        raise HTTPException(status_code=422, detail="patients list cannot exceed 200 records")
+
+    occupancy = get_occupancy()
+    _ensure_occupancy_seeded(occupancy)
+
+    routing_engine = RoutingEngine(occupancy)
+    patient_payloads = [
+        {
+            "patient_id": item.patient_id,
+            "risk_level": item.risk_level,
+            "priority_score": item.priority_score,
+            "department": item.department,
+            "preferred_hospital_id": item.preferred_hospital_id,
+            "queue_position": item.queue_position,
+            "queue_ahead": (
+                item.queue_ahead
+                if item.queue_ahead is not None
+                else max(0, int(item.queue_position) - 1)
+            ),
+        }
+        for item in body.patients
+    ]
+
+    try:
+        distribution = routing_engine.distribute_patient_inflow(patient_payloads)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    route_ids: List[str] = []
+    if body.persist_routes:
+        assignments = distribution.get("assignments", [])
+        for assignment in assignments:
+            if not isinstance(assignment, dict):
+                continue
+
+            queue_ahead = max(0, int(assignment.get("queue_ahead", 0) or 0))
+            route_id = occupancy.record_route_decision(
+                routing=assignment,
+                queue_ahead=queue_ahead,
+                source="api_route_distribute",
+                metadata={
+                    "inflow_rank": assignment.get("inflow_rank"),
+                    "distribution_batch_size": len(body.patients),
+                },
+            )
+            assignment["route_id"] = route_id
+            route_ids.append(route_id)
+
+    return {
+        "distribution": distribution,
+        "persisted_routes": len(route_ids),
+        "route_ids": route_ids,
+        "routing_metrics": occupancy.get_routing_operational_metrics(hours=24),
+        "summary": occupancy.current_load()["summary"],
+    }
 
 
 @app.post("/api/predict")
@@ -892,7 +1821,9 @@ def predict_and_save(
 
     db = get_db()
     shap_rows = explanation["explanation"]["top_contributors"] if explanation else []
-    prediction_id = db.save_prediction(payload, result, shap_top_contributors=shap_rows, source="manual")
+    prediction_id = db.save_prediction(
+        payload, result, shap_top_contributors=shap_rows, source="manual"
+    )
 
     return {
         "patient": payload,
@@ -912,7 +1843,10 @@ async def predict_batch(
 ):
     allowed_suffixes = (".csv", ".xlsx", ".xls")
     if not file.filename or not file.filename.lower().endswith(allowed_suffixes):
-        raise HTTPException(status_code=400, detail="Only CSV, XLSX, and XLS files are supported for batch processing")
+        raise HTTPException(
+            status_code=400,
+            detail="Only CSV, XLSX, and XLS files are supported for batch processing",
+        )
 
     temp_path = ROOT / "data" / f"tmp_batch_{file.filename}"
     temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -928,9 +1862,15 @@ async def predict_batch(
 
         risk_counts = {
             "total": len(result_df),
-            "high": int((result_df["risk_level"] == "High").sum()) if not result_df.empty else 0,
-            "medium": int((result_df["risk_level"] == "Medium").sum()) if not result_df.empty else 0,
-            "low": int((result_df["risk_level"] == "Low").sum()) if not result_df.empty else 0,
+            "high": int((result_df["risk_level"] == "High").sum())
+            if not result_df.empty
+            else 0,
+            "medium": int((result_df["risk_level"] == "Medium").sum())
+            if not result_df.empty
+            else 0,
+            "low": int((result_df["risk_level"] == "Low").sum())
+            if not result_df.empty
+            else 0,
         }
 
         return {
@@ -968,11 +1908,39 @@ def symptom_dialogue(
 ):
     try:
         return _query_ollama_symptom_dialogue(body)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, ValueError):
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        TimeoutError,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+    ) as e:
+        error_msg = str(e)
+        if "Cannot read image" in error_msg or "does not support image" in error_msg:
+            return {
+                "source": "error",
+                "model": body.model,
+                "error": f"The model '{body.model}' does not support image input. Please use a text-only model.",
+                "follow_up_questions": _fallback_followup_questions(
+                    body.presenting_complaint, body.max_followup_questions
+                ),
+                "structured": {
+                    "extracted": {
+                        "chief_complaint": body.presenting_complaint,
+                        "reported_duration": "unknown",
+                        "reported_severity": "unknown",
+                    },
+                    "red_flags": [],
+                    "urgency_hint": "requires_clinical_assessment",
+                },
+            }
         return {
             "source": "fallback",
             "model": "rule_based",
-            "follow_up_questions": _fallback_followup_questions(body.presenting_complaint, body.max_followup_questions),
+            "follow_up_questions": _fallback_followup_questions(
+                body.presenting_complaint, body.max_followup_questions
+            ),
             "structured": {
                 "extracted": {
                     "chief_complaint": body.presenting_complaint,
@@ -1090,11 +2058,16 @@ async def upload_document(file: UploadFile = File(...)):
 
 # ---------- Queue ----------
 
+
 @app.get("/api/queue")
 @safe_endpoint
 def get_queue(status: Optional[str] = None):
     db = get_db()
-    monitoring_events = db.apply_continuous_monitoring(check_interval_minutes=5)
+    loop_state = _get_closed_loop_state_snapshot()
+    if bool(loop_state.get("running", False)):
+        monitoring_events = []
+    else:
+        monitoring_events = db.apply_continuous_monitoring(check_interval_minutes=5)
     queue_data = db.get_priority_queue(status=status if status != "all" else None)
     queue_df = pd.DataFrame(queue_data)
 
@@ -1102,15 +2075,27 @@ def get_queue(status: Optional[str] = None):
     alerts = [event["message"] for event in monitoring_events]
 
     if not queue_df.empty:
-        waiting = queue_df[queue_df["status"] == "waiting"] if "status" in queue_df.columns else pd.DataFrame()
-        critical_waiting = waiting[waiting["priority_score"] >= 9.0] if not waiting.empty else pd.DataFrame()
+        waiting = (
+            queue_df[queue_df["status"] == "waiting"]
+            if "status" in queue_df.columns
+            else pd.DataFrame()
+        )
+        critical_waiting = (
+            waiting[waiting["priority_score"] >= 9.0]
+            if not waiting.empty
+            else pd.DataFrame()
+        )
         if not critical_waiting.empty:
-            alerts.append(f"Priority alert: {len(critical_waiting)} critical patients are waiting")
+            alerts.append(
+                f"Priority alert: {len(critical_waiting)} critical patients are waiting"
+            )
 
         if not dept_load.empty:
             overload = dept_load[dept_load["waiting_count"] >= 10]
             if not overload.empty:
-                alerts.append("Department overload: " + ", ".join(overload["department"].tolist()))
+                alerts.append(
+                    "Department overload: " + ", ".join(overload["department"].tolist())
+                )
 
         enriched_queue: List[Dict[str, object]] = []
         for row in queue_data:
@@ -1140,19 +2125,33 @@ def get_queue(status: Optional[str] = None):
                 "vitals_trend": trend,
             }
             if note["deteriorating"]:
-                alerts.append(f"Re-triage recommended: {row.get('patient_id')} ({note['monitoring_note']})")
+                alerts.append(
+                    f"Re-triage recommended: {row.get('patient_id')} ({note['monitoring_note']})"
+                )
             if bool(trend.get("is_deteriorating")):
-                alerts.append(f"Trend alert: {row.get('patient_id')} shows progressive instability ({', '.join(trend.get('signals', []))})")
+                alerts.append(
+                    f"Trend alert: {row.get('patient_id')} shows progressive instability ({', '.join(trend.get('signals', []))})"
+                )
             enriched_queue.append(enriched)
 
         return {
             "queue": enriched_queue,
             "waiting_count": int(len(waiting)),
-            "critical_count": int((waiting["priority_score"] >= 9.0).sum()) if not waiting.empty else 0,
+            "critical_count": int((waiting["priority_score"] >= 9.0).sum())
+            if not waiting.empty
+            else 0,
             "alerts": alerts,
-            "departments": sorted(queue_df["department"].dropna().unique().tolist()) if "department" in queue_df.columns else [],
+            "departments": sorted(queue_df["department"].dropna().unique().tolist())
+            if "department" in queue_df.columns
+            else [],
         }
-    return {"queue": [], "waiting_count": 0, "critical_count": 0, "alerts": alerts, "departments": []}
+    return {
+        "queue": [],
+        "waiting_count": 0,
+        "critical_count": 0,
+        "alerts": alerts,
+        "departments": [],
+    }
 
 
 @app.post("/api/queue/next")
@@ -1179,10 +2178,80 @@ def update_queue_status(queue_id: int, body: QueueStatusUpdate):
 
 @app.delete("/api/queue/completed")
 @safe_endpoint
-def clear_completed(current_user: Dict[str, str] = Depends(require_role("Doctor", "Admin"))):
+def clear_completed(
+    current_user: Dict[str, str] = Depends(require_role("Doctor", "Admin")),
+):
     db = get_db()
     deleted = db.clear_completed()
     return {"deleted": deleted}
+
+
+@app.get("/api/system/loop-status")
+@safe_endpoint
+def system_loop_status(
+    current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
+):
+    return {
+        "state": _get_closed_loop_state_snapshot(),
+        "config": {
+            "queue_interval_seconds": CLOSED_LOOP_QUEUE_INTERVAL_SECONDS,
+            "occupancy_interval_seconds": CLOSED_LOOP_OCCUPANCY_INTERVAL_SECONDS,
+            "overflow_threshold": CLOSED_LOOP_OVERFLOW_THRESHOLD,
+            "rebalance_max_patients": CLOSED_LOOP_REBALANCE_MAX_PATIENTS,
+            "rebalance_cooldown_seconds": CLOSED_LOOP_REBALANCE_COOLDOWN_SECONDS,
+        },
+    }
+
+
+@app.post("/api/system/loop/run-once")
+@safe_endpoint
+def system_loop_run_once(
+    body: LoopRunRequest,
+    current_user: Dict[str, str] = Depends(require_role("Admin")),
+):
+    result: Dict[str, object] = {
+        "queue_monitoring": None,
+        "overflow_rebalance": None,
+    }
+
+    if body.queue_monitoring:
+        result["queue_monitoring"] = _run_queue_monitoring_cycle()
+
+    if body.overflow_rebalance:
+        result["overflow_rebalance"] = _run_overflow_rebalance_cycle(
+            enforce_cooldown=body.enforce_cooldown,
+            max_patients=CLOSED_LOOP_REBALANCE_MAX_PATIENTS,
+        )
+
+    return {
+        "ran_at": _utc_now_iso(),
+        **result,
+        "state": _get_closed_loop_state_snapshot(),
+    }
+
+
+@app.post("/api/system/loop/control")
+@safe_endpoint
+def system_loop_control(
+    body: LoopControlRequest,
+    current_user: Dict[str, str] = Depends(require_role("Admin")),
+):
+    action = body.action
+
+    if action == "pause":
+        _stop_closed_loop_worker()
+        _set_closed_loop_state({"enabled": False})
+    elif action == "resume":
+        _start_closed_loop_worker()
+    else:
+        _stop_closed_loop_worker()
+        _start_closed_loop_worker()
+
+    return {
+        "ran_at": _utc_now_iso(),
+        "action": action,
+        "state": _get_closed_loop_state_snapshot(),
+    }
 
 
 @app.post("/api/feedback/outcome")
@@ -1220,8 +2289,12 @@ def list_outcome_feedback(
     rows = db.get_outcome_feedback(limit=limit)
     frame = pd.DataFrame(rows)
     agreement_rate = 0.0
-    if not frame.empty and {"actual_risk_level", "predicted_risk_level"}.issubset(frame.columns):
-        agreement_rate = float((frame["actual_risk_level"] == frame["predicted_risk_level"]).mean() * 100)
+    if not frame.empty and {"actual_risk_level", "predicted_risk_level"}.issubset(
+        frame.columns
+    ):
+        agreement_rate = float(
+            (frame["actual_risk_level"] == frame["predicted_risk_level"]).mean() * 100
+        )
 
     return {
         "count": int(len(rows)),
@@ -1231,6 +2304,7 @@ def list_outcome_feedback(
 
 
 # ---------- Analytics ----------
+
 
 @app.get("/api/analytics")
 @safe_endpoint
@@ -1244,13 +2318,21 @@ def analytics(
     queue = pd.DataFrame(db.get_priority_queue())
     high_risk = pd.DataFrame(db.get_high_risk_patients(limit=500))
     predictions = pd.DataFrame(db.get_predictions(limit=5000))
+    occupancy = get_occupancy()
+    routing_metrics = occupancy.get_routing_operational_metrics(hours=24)
 
-    if predictions.empty and queue.empty:
+    if (
+        predictions.empty
+        and queue.empty
+        and int(routing_metrics.get("total_routes", 0)) == 0
+    ):
         return {"empty": True}
 
     # Parse dates
     if not predictions.empty:
-        predictions["timestamp"] = pd.to_datetime(predictions["timestamp"], errors="coerce")
+        predictions["timestamp"] = pd.to_datetime(
+            predictions["timestamp"], errors="coerce"
+        )
         predictions = predictions.dropna(subset=["timestamp"])
         predictions["date"] = predictions["timestamp"].dt.date
 
@@ -1270,44 +2352,109 @@ def analytics(
 
     # Metrics
     total = len(filtered)
-    high_risk_rate = float((filtered["risk_level"] == "High").mean() * 100) if total > 0 and "risk_level" in filtered.columns else 0.0
-    avg_priority = float(filtered["priority_score"].mean()) if total > 0 and "priority_score" in filtered.columns else 0.0
-    avg_confidence = float(filtered["model_confidence"].mean() * 100) if total > 0 and "model_confidence" in filtered.columns else 0.0
+    high_risk_rate = (
+        float((filtered["risk_level"] == "High").mean() * 100)
+        if total > 0 and "risk_level" in filtered.columns
+        else 0.0
+    )
+    avg_priority = (
+        float(filtered["priority_score"].mean())
+        if total > 0 and "priority_score" in filtered.columns
+        else 0.0
+    )
+    avg_confidence = (
+        float(filtered["model_confidence"].mean() * 100)
+        if total > 0 and "model_confidence" in filtered.columns
+        else 0.0
+    )
 
-    waiting_queue = queue[queue["status"] == "waiting"] if not queue.empty and "status" in queue.columns else pd.DataFrame()
+    waiting_queue = (
+        queue[queue["status"] == "waiting"]
+        if not queue.empty and "status" in queue.columns
+        else pd.DataFrame()
+    )
 
     # Chart data
-    risk_counts = filtered["risk_level"].value_counts().to_dict() if "risk_level" in filtered.columns else {}
-    dept_counts = filtered["recommended_department"].value_counts().head(10).to_dict() if "recommended_department" in filtered.columns else {}
+    risk_counts = (
+        filtered["risk_level"].value_counts().to_dict()
+        if "risk_level" in filtered.columns
+        else {}
+    )
+    dept_counts = (
+        filtered["recommended_department"].value_counts().head(10).to_dict()
+        if "recommended_department" in filtered.columns
+        else {}
+    )
 
     # Trend data
     trend_data = []
     if not filtered.empty and "risk_level" in filtered.columns:
-        trend = filtered.groupby([filtered["date"].astype(str), "risk_level"], as_index=False).size().rename(columns={"size": "count"})
+        trend = (
+            filtered.groupby(
+                [filtered["date"].astype(str), "risk_level"], as_index=False
+            )
+            .size()
+            .rename(columns={"size": "count"})
+        )
         trend_data = trend.to_dict(orient="records")
 
     # Priority category
-    priority_cat_data = filtered["priority_category"].value_counts().to_dict() if "priority_category" in filtered.columns else {}
+    priority_cat_data = (
+        filtered["priority_category"].value_counts().to_dict()
+        if "priority_category" in filtered.columns
+        else {}
+    )
 
     # Symptom data
     symptom_data = {}
     if "symptoms" in filtered.columns:
-        symptom_series = filtered["symptoms"].fillna("").str.split(",").explode().str.strip().replace("", pd.NA).dropna()
+        symptom_series = (
+            filtered["symptoms"]
+            .fillna("")
+            .str.split(",")
+            .explode()
+            .str.strip()
+            .replace("", pd.NA)
+            .dropna()
+        )
         symptom_data = symptom_series.value_counts().head(12).to_dict()
 
     # Recent activity
-    activity_cols = ["timestamp", "patient_id", "risk_level", "priority_score", "priority_category", "recommended_department", "model_confidence"]
+    activity_cols = [
+        "timestamp",
+        "patient_id",
+        "risk_level",
+        "priority_score",
+        "priority_category",
+        "recommended_department",
+        "model_confidence",
+    ]
     available_cols = [c for c in activity_cols if c in filtered.columns]
-    recent = filtered.sort_values("timestamp", ascending=False)[available_cols].head(30) if available_cols else pd.DataFrame()
+    recent = (
+        filtered.sort_values("timestamp", ascending=False)[available_cols].head(30)
+        if available_cols
+        else pd.DataFrame()
+    )
     if "timestamp" in recent.columns:
         recent["timestamp"] = recent["timestamp"].astype(str)
 
     # Filter options
-    all_risk = sorted(predictions["risk_level"].dropna().unique().tolist()) if "risk_level" in predictions.columns else []
-    all_depts = sorted(predictions["recommended_department"].dropna().unique().tolist()) if "recommended_department" in predictions.columns else []
+    all_risk = (
+        sorted(predictions["risk_level"].dropna().unique().tolist())
+        if "risk_level" in predictions.columns
+        else []
+    )
+    all_depts = (
+        sorted(predictions["recommended_department"].dropna().unique().tolist())
+        if "recommended_department" in predictions.columns
+        else []
+    )
     date_range = {}
     if not predictions.empty and "date" in predictions.columns:
-        date_range = {"min": str(predictions["date"].min()), "max": str(predictions["date"].max())}
+        date_range = {
+            "min": str(predictions["date"].min()),
+            "max": str(predictions["date"].max()),
+        }
 
     return {
         "empty": False,
@@ -1317,8 +2464,23 @@ def analytics(
             "avg_priority": round(avg_priority, 2),
             "avg_confidence": round(avg_confidence, 1),
             "queue_waiting": int(len(waiting_queue)),
-            "critical_waiting": int((waiting_queue["priority_score"] >= 9.0).sum()) if not waiting_queue.empty and "priority_score" in waiting_queue.columns else 0,
+            "critical_waiting": int((waiting_queue["priority_score"] >= 9.0).sum())
+            if not waiting_queue.empty and "priority_score" in waiting_queue.columns
+            else 0,
             "recent_high_risk": int(len(high_risk)),
+            "routing_total_routes": int(routing_metrics.get("total_routes", 0)),
+            "routing_capacity_hit_rate": float(
+                routing_metrics.get("capacity_hit_rate", 0.0)
+            ),
+            "routing_overflow_rate": float(
+                routing_metrics.get("overflow_rate", 0.0)
+            ),
+            "routing_mean_wait_delta": float(
+                routing_metrics.get("mean_wait_delta_minutes", 0.0)
+            ),
+            "routing_admit_conversion_rate": float(
+                routing_metrics.get("admit_conversion_rate", 0.0)
+            ),
         },
         "charts": {
             "risk_counts": risk_counts,
@@ -1327,6 +2489,7 @@ def analytics(
             "priority_categories": priority_cat_data,
             "symptoms": symptom_data,
         },
+        "routing_quality": routing_metrics,
         "recent_activity": recent.to_dict(orient="records") if not recent.empty else [],
         "filter_options": {
             "risk_levels": all_risk,
@@ -1338,6 +2501,7 @@ def analytics(
 
 # ---------- History ----------
 
+
 @app.get("/api/history")
 @safe_endpoint
 def history(
@@ -1348,6 +2512,7 @@ def history(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = 2000,
+    latest_only: bool = Query(default=True),
 ):
     db = get_db()
     all_predictions = pd.DataFrame(db.get_predictions(limit=5000))
@@ -1359,13 +2524,21 @@ def history(
         patient_id_query=patient_id or None,
         risk_levels=risk_levels.split(",") if risk_levels else None,
         departments=departments.split(",") if departments else None,
-        priority_categories=priority_categories.split(",") if priority_categories else None,
+        priority_categories=priority_categories.split(",")
+        if priority_categories
+        else None,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
     )
+    if latest_only:
+        records = _latest_history_per_patient(records)
 
-    dept_options = sorted(all_predictions["recommended_department"].dropna().unique().tolist()) if "recommended_department" in all_predictions.columns else []
+    dept_options = (
+        sorted(all_predictions["recommended_department"].dropna().unique().tolist())
+        if "recommended_department" in all_predictions.columns
+        else []
+    )
 
     return {
         "empty": False,
@@ -1386,6 +2559,7 @@ def history_phi_safe(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = 2000,
+    latest_only: bool = Query(default=True),
     current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
 ):
     db = get_db()
@@ -1393,11 +2567,15 @@ def history_phi_safe(
         patient_id_query=patient_id or None,
         risk_levels=risk_levels.split(",") if risk_levels else None,
         departments=departments.split(",") if departments else None,
-        priority_categories=priority_categories.split(",") if priority_categories else None,
+        priority_categories=priority_categories.split(",")
+        if priority_categories
+        else None,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
     )
+    if latest_only:
+        records = _latest_history_per_patient(records)
     redacted = redact_records(records, extra_sensitive_keys={"notes"})
     return {
         "empty": len(redacted) == 0,
@@ -1419,14 +2597,21 @@ def clear_old_records(
 
 # ---------- Admin Data Controls ----------
 
+
 @app.delete("/api/admin/data/specific")
+@app.post("/api/admin/data/specific")
 @safe_endpoint
 def admin_delete_specific(
     body: AdminDeleteRequest,
     current_user: Dict[str, str] = Depends(require_role("Admin")),
 ):
-    if not any([body.patient_id, body.prediction_id is not None, body.queue_id is not None]):
-        raise HTTPException(status_code=422, detail="Provide at least one target: patient_id, prediction_id, or queue_id")
+    if not any(
+        [body.patient_id, body.prediction_id is not None, body.queue_id is not None]
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Provide at least one target: patient_id, prediction_id, or queue_id",
+        )
 
     db = get_db()
     deleted = db.delete_specific_records(
@@ -1435,14 +2620,30 @@ def admin_delete_specific(
         queue_id=body.queue_id,
     )
 
-    if body.prediction_id is not None and int(deleted.get("deleted_prediction_rows", 0)) == 0:
-        raise HTTPException(status_code=404, detail=f"Prediction {body.prediction_id} not found")
-    if body.queue_id is not None and int(deleted.get("deleted_queue_rows", 0)) == 0 and body.patient_id is None and body.prediction_id is None:
-        raise HTTPException(status_code=404, detail=f"Queue item {body.queue_id} not found")
+    if (
+        body.prediction_id is not None
+        and int(deleted.get("deleted_prediction_rows", 0)) == 0
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"Prediction {body.prediction_id} not found"
+        )
+    if (
+        body.queue_id is not None
+        and int(deleted.get("deleted_queue_rows", 0)) == 0
+        and body.patient_id is None
+        and body.prediction_id is None
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"Queue item {body.queue_id} not found"
+        )
     if body.patient_id is not None:
-        affected = int(deleted.get("deleted_prediction_rows", 0)) + int(deleted.get("deleted_patient_rows", 0))
+        affected = int(deleted.get("deleted_prediction_rows", 0)) + int(
+            deleted.get("deleted_patient_rows", 0)
+        )
         if affected == 0:
-            raise HTTPException(status_code=404, detail=f"Patient {body.patient_id} not found")
+            raise HTTPException(
+                status_code=404, detail=f"Patient {body.patient_id} not found"
+            )
 
     return {
         "message": "Specific deletion complete",
@@ -1451,6 +2652,7 @@ def admin_delete_specific(
 
 
 @app.delete("/api/admin/data/recent")
+@app.post("/api/admin/data/recent")
 @safe_endpoint
 def admin_delete_recent(
     days: int = Query(default=30, ge=1, le=365),
@@ -1467,22 +2669,45 @@ def admin_delete_recent(
     }
 
 
+@app.delete("/api/admin/data/all")
+@app.post("/api/admin/data/all")
+@safe_endpoint
+def admin_delete_all_data(
+    current_user: Dict[str, str] = Depends(require_role("Admin")),
+):
+    db = get_db()
+    deleted = db.clear_all_data()
+    return {
+        "message": "All operational data cleared",
+        **deleted,
+    }
+
+
 # ---------- Exports ----------
+
 
 @app.post("/api/export/pdf/single")
 @safe_endpoint
 def export_single_pdf(patient: dict, prediction: dict):
     pdf_bytes = single_result_pdf(patient, prediction)
-    return Response(content=pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": f"attachment; filename=triage_{prediction.get('patient_id', 'report')}.pdf"})
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=triage_{prediction.get('patient_id', 'report')}.pdf"
+        },
+    )
 
 
 @app.post("/api/export/pdf/batch")
 @safe_endpoint
 def export_batch_pdf(results: List[dict]):
     pdf_bytes = batch_results_pdf(results)
-    return Response(content=pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": "attachment; filename=batch_report.pdf"})
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=batch_report.pdf"},
+    )
 
 
 @app.post("/api/export/csv")
@@ -1490,8 +2715,11 @@ def export_batch_pdf(results: List[dict]):
 def export_csv(records: List[dict]):
     df = pd.DataFrame(records)
     csv_bytes = dataframe_to_csv_bytes(df)
-    return Response(content=csv_bytes, media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=export.csv"})
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=export.csv"},
+    )
 
 
 @app.post("/api/export/csv/phi-safe")
@@ -1500,7 +2728,9 @@ def export_csv_phi_safe(
     body: ExportRecordsRequest,
     current_user: Dict[str, str] = Depends(require_role("Nurse", "Doctor", "Admin")),
 ):
-    redacted = redact_records(body.records, extra_sensitive_keys={"notes", "clinician_notes"})
+    redacted = redact_records(
+        body.records, extra_sensitive_keys={"notes", "clinician_notes"}
+    )
     df = pd.DataFrame(redacted)
     csv_bytes = dataframe_to_csv_bytes(df)
     return Response(
@@ -1511,6 +2741,7 @@ def export_csv_phi_safe(
 
 
 # ---------- Health ----------
+
 
 @app.get("/api/healthcheck")
 @safe_endpoint
@@ -1527,6 +2758,7 @@ def security_config(current_user: Dict[str, str] = Depends(require_role("Admin")
 
 # ---------- Dashboard summary ----------
 
+
 @app.get("/api/dashboard")
 @safe_endpoint
 def dashboard_summary():
@@ -1534,7 +2766,11 @@ def dashboard_summary():
     queue = pd.DataFrame(db.get_priority_queue())
     predictions = pd.DataFrame(db.get_predictions(limit=5000))
 
-    waiting = queue[queue["status"] == "waiting"] if not queue.empty and "status" in queue.columns else pd.DataFrame()
+    waiting = (
+        queue[queue["status"] == "waiting"]
+        if not queue.empty and "status" in queue.columns
+        else pd.DataFrame()
+    )
     active_queue = (
         queue[queue["status"] != "completed"]
         if not queue.empty and "status" in queue.columns

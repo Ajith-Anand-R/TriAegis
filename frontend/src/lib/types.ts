@@ -2,6 +2,7 @@
 
 export interface PatientPayload {
     Patient_ID: string;
+    "Patient Name"?: string;
     Age: number;
     Gender: string;
     Symptoms: string;
@@ -95,6 +96,7 @@ export interface QueueItem {
     queue_position: number;
     estimated_wait_time: string;
     patient_id?: string;
+    patient_name?: string;
 }
 
 export interface QueueResponse {
@@ -122,6 +124,11 @@ export interface AnalyticsData {
         queue_waiting: number;
         critical_waiting: number;
         recent_high_risk: number;
+        routing_total_routes?: number;
+        routing_capacity_hit_rate?: number;
+        routing_overflow_rate?: number;
+        routing_mean_wait_delta?: number;
+        routing_admit_conversion_rate?: number;
     };
     charts?: {
         risk_counts: Record<string, number>;
@@ -129,6 +136,19 @@ export interface AnalyticsData {
         trend: { date: string; risk_level: string; count: number }[];
         priority_categories: Record<string, number>;
         symptoms: Record<string, number>;
+    };
+    routing_quality?: {
+        window_hours: number;
+        total_routes: number;
+        capacity_hit_count: number;
+        capacity_hit_rate: number;
+        overflow_count: number;
+        overflow_rate: number;
+        admitted_count: number;
+        admit_conversion_rate: number;
+        mean_estimated_wait_minutes: number;
+        mean_actual_wait_minutes: number;
+        mean_wait_delta_minutes: number;
     };
     recent_activity?: Record<string, unknown>[];
     filter_options?: {
@@ -150,4 +170,134 @@ export interface HealthcheckData {
     ok: boolean;
     checks: Record<string, string>;
     details: Record<string, unknown>;
+}
+
+export interface RouteDecision {
+    route_id: string;
+    patient_id: string;
+    risk_level: string;
+    priority_score: number;
+    department: string;
+    preferred_hospital_id?: string | null;
+    queue_ahead?: number;
+    inflow_rank?: number;
+    source_queue_index?: number;
+    recommended_hospital_id: string;
+    recommended_hospital_name: string;
+    recommended_ward_id: string;
+    recommended_ward_name: string;
+    recommended_bed_id?: string | null;
+    recommended_bed_label?: string | null;
+    estimated_wait_minutes: number;
+    estimated_wait_band: string;
+    has_capacity: boolean;
+    overflow_risk: string;
+    specialty_match_tier?: number | null;
+    route_reason: string;
+    explanation_fields: Record<string, unknown>;
+    alternatives: RouteAlternative[];
+}
+
+export interface RouteAlternative {
+    hospital_id: string;
+    hospital_name: string;
+    ward_id: string;
+    ward_name: string;
+    has_capacity: boolean;
+    available_beds: number;
+    load_status: string;
+    specialty_tier?: number | null;
+    transfer_penalty?: number;
+    balancing_penalty?: number;
+    policy_flags?: string[];
+    composite_score: number;
+}
+
+export interface RouteTrackingSummary {
+    route_id: string;
+    patient_id: string;
+    admitted?: boolean;
+    admitted_bed_id?: string | null;
+    actual_wait_minutes?: number;
+    wait_delta_minutes?: number;
+    created_at?: string;
+    admitted_at?: string;
+    discharged?: boolean;
+    discharged_at?: string;
+}
+
+export interface RoutingMetrics {
+    window_hours: number;
+    total_routes: number;
+    capacity_hit_count: number;
+    capacity_hit_rate: number;
+    overflow_count: number;
+    overflow_rate: number;
+    admitted_count: number;
+    admit_conversion_rate: number;
+    mean_estimated_wait_minutes: number;
+    mean_actual_wait_minutes: number;
+    mean_wait_delta_minutes: number;
+}
+
+export interface RouteResponse {
+    routing: RouteDecision;
+    routing_metrics?: RoutingMetrics;
+    summary: Record<string, unknown>;
+}
+
+export interface RouteAdmitResponse extends RouteResponse {
+    admitted: boolean;
+    admission: Record<string, unknown> | null;
+    admit_error: string | null;
+    route_tracking: RouteTrackingSummary | null;
+}
+
+export interface RouteDistributionPatientPayload {
+    patient_id?: string;
+    risk_level: string;
+    priority_score: number;
+    department: string;
+    preferred_hospital_id?: string;
+    queue_position?: number;
+    queue_ahead?: number;
+}
+
+export interface RouteDistributionResult {
+    total_incoming_requests: number;
+    ordering_policy: string;
+    served_with_capacity: number;
+    overflow_recommended: number;
+    assignments: RouteDecision[];
+    hospital_distribution: Array<{
+        hospital_id: string;
+        hospital_name: string;
+        assigned_patients: number;
+    }>;
+    ward_distribution: Array<{
+        ward_id: string;
+        ward_name: string;
+        hospital_id: string;
+        hospital_name: string;
+        assigned_patients: number;
+    }>;
+    projected_summary: {
+        ward_count: number;
+        hospital_count: number;
+        total_capacity: number;
+        total_occupied: number;
+        total_available: number;
+        network_load_ratio: number;
+        network_load_percent: number;
+    };
+    projected_hospitals: Record<string, unknown>[];
+    projected_wards: Record<string, unknown>[];
+}
+
+export interface RouteDistributeResponse {
+    distribution: RouteDistributionResult;
+    persisted_routes: number;
+    route_ids: string[];
+    routing_metrics?: RoutingMetrics;
+    summary: Record<string, unknown>;
 }

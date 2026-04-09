@@ -177,6 +177,77 @@ def test_queue_status_transitions() -> None:
     assert len(in_progress) >= 1
 
 
+def test_same_patient_keeps_single_active_queue_entry(tmp_path: Path) -> None:
+    db = TriageDatabase(tmp_path / "test_duplicate_active_queue.db")
+    engine = TriageMLEngine(ROOT)
+
+    sample = pd.read_csv(SAMPLE_BATCH).head(1).to_dict(orient="records")[0]
+    sample["Patient_ID"] = "PAT-DUP-001"
+
+    first_prediction = engine.predict_one(sample)
+    db.save_prediction(sample, first_prediction, source="dup_active_1")
+
+    waiting_rows = [
+        row for row in db.get_priority_queue(status="waiting")
+        if str(row.get("patient_id")) == "PAT-DUP-001"
+    ]
+    assert len(waiting_rows) == 1
+
+    db.update_queue_status(int(waiting_rows[0]["queue_id"]), "in_progress")
+
+    second_payload = dict(sample)
+    second_payload["Symptoms"] = "cough,fever"
+    second_prediction = engine.predict_one(second_payload)
+    second_prediction_id = db.save_prediction(second_payload, second_prediction, source="dup_active_2")
+
+    active_rows = [
+        row for row in db.get_priority_queue()
+        if str(row.get("patient_id")) == "PAT-DUP-001"
+        and str(row.get("status")) in {"waiting", "in_progress"}
+    ]
+
+    assert len(active_rows) == 1
+    assert int(active_rows[0]["prediction_id"]) == int(second_prediction_id)
+    assert str(active_rows[0]["status"]) == "in_progress"
+
+
+def test_patient_name_is_saved_and_returned_with_queue_row() -> None:
+    db = TriageDatabase(ROOT / "database" / "test_patient_name_queue.db")
+    engine = TriageMLEngine(ROOT)
+
+    sample = pd.read_csv(SAMPLE_BATCH).head(1).to_dict(orient="records")[0]
+    sample["Patient_ID"] = "PAT-NAME-001"
+    sample["Patient Name"] = "Alex Carter"
+
+    prediction = engine.predict_one(sample)
+    db.save_prediction(sample, prediction, source="name_test")
+
+    rows = [
+        row for row in db.get_priority_queue()
+        if str(row.get("patient_id")) == "PAT-NAME-001"
+    ]
+    assert len(rows) == 1
+    assert str(rows[0].get("patient_name")) == "Alex Carter"
+
+
+def test_database_clear_all_data_removes_operational_records() -> None:
+    db = TriageDatabase(ROOT / "database" / "test_clear_all.db")
+    engine = TriageMLEngine(ROOT)
+
+    sample = pd.read_csv(SAMPLE_BATCH).head(1).to_dict(orient="records")[0]
+    sample["Patient_ID"] = "PAT-CLEAR-001"
+    prediction = engine.predict_one(sample)
+    db.save_prediction(sample, prediction, source="clear_all_test")
+
+    deleted = db.clear_all_data()
+
+    assert int(deleted.get("deleted_queue_rows", 0)) >= 1
+    assert int(deleted.get("deleted_prediction_rows", 0)) >= 1
+    assert int(deleted.get("deleted_patient_rows", 0)) >= 1
+    assert db.get_priority_queue() == []
+    assert db.get_predictions(limit=10) == []
+
+
 def test_validator_rejects_invalid_payload() -> None:
     payload = {
         "Patient_ID": "abc",
@@ -253,6 +324,20 @@ def test_database_prediction_search_api() -> None:
         limit=50,
     )
     assert len(filtered) >= 1
+
+
+def test_database_prediction_search_matches_patient_name() -> None:
+    db = TriageDatabase(ROOT / "database" / "test_search_name.db")
+    engine = TriageMLEngine(ROOT)
+
+    sample = pd.read_csv(SAMPLE_BATCH).head(1).to_dict(orient="records")[0]
+    sample["Patient_ID"] = "PAT-NAME-SEARCH-001"
+    sample["Patient Name"] = "Jordan Matthews"
+    pred = engine.predict_one(sample)
+    db.save_prediction(sample, pred, source="search_name_test")
+
+    filtered = db.search_predictions(patient_id_query="Jordan", limit=50)
+    assert any(str(row.get("patient_id")) == "PAT-NAME-SEARCH-001" for row in filtered)
 
 
 def test_healthcheck_passes() -> None:

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Sora } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,6 +9,12 @@ import { VoiceAssistantProvider } from "@/components/voice-assistant-context";
 
 const inter = Inter({
   variable: "--font-geist-sans",
+  subsets: ["latin"],
+  display: "swap",
+});
+
+const sora = Sora({
+  variable: "--font-triaegis-display",
   subsets: ["latin"],
   display: "swap",
 });
@@ -41,7 +47,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${sora.variable} font-sans antialiased`}>
         <ThemeProvider>
           <LanguageProvider>
             <VoiceAssistantProvider>

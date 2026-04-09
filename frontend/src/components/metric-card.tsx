@@ -26,7 +26,7 @@ export function MetricCard({ title, value, subtitle, icon: Icon, variant = "defa
     return (
         <div
             className={cn(
-                "group relative overflow-hidden rounded-xl border border-border/50 bg-card p-5 transition-all duration-300 hover:border-border hover:shadow-lg",
+                "group relative overflow-hidden rounded-xl border border-border/50 bg-card p-4 transition-all duration-300 hover:border-border hover:shadow-lg sm:p-5",
                 style.glow
             )}
         >
@@ -36,13 +36,13 @@ export function MetricCard({ title, value, subtitle, icon: Icon, variant = "defa
                     <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                         {title}
                     </p>
-                    <p className="text-2xl font-bold tracking-tight">{value}</p>
+                    <p className="text-xl font-bold tracking-tight sm:text-2xl">{value}</p>
                     {subtitle && (
                         <p className="text-xs text-muted-foreground">{subtitle}</p>
                     )}
                 </div>
                 {Icon && (
-                    <div className={cn("rounded-lg bg-background/50 p-2.5", style.icon)}>
+                    <div className={cn("rounded-lg bg-background/50 p-2", style.icon)}>
                         <Icon className="h-5 w-5" />
                     </div>
                 )}
